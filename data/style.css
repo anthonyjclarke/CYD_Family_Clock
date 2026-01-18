@@ -1,0 +1,227 @@
+/* CYD World Clock - Web UI Styles */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  background: #1a1a2e;
+  color: #eee;
+  line-height: 1.6;
+  padding: 20px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+header {
+  background: #16213e;
+  padding: 20px;
+  border-radius: 10px;
+  margin-bottom: 20px;
+  border: 1px solid #0f3460;
+}
+
+header h1 {
+  color: #00d9ff;
+  font-size: 2rem;
+  margin-bottom: 5px;
+}
+
+header .sub {
+  color: #aaa;
+  font-size: 0.9rem;
+}
+
+main {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.card {
+  background: #16213e;
+  border: 1px solid #0f3460;
+  border-radius: 10px;
+  padding: 20px;
+}
+
+.card h2 {
+  color: #00d9ff;
+  font-size: 1.4rem;
+  margin-bottom: 15px;
+  border-bottom: 2px solid #0f3460;
+  padding-bottom: 10px;
+}
+
+.card h3 {
+  color: #00adb5;
+  font-size: 1.1rem;
+  margin-top: 15px;
+  margin-bottom: 10px;
+}
+
+/* Status Grid */
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 15px;
+}
+
+.status-item {
+  padding: 10px;
+  background: #0f3460;
+  border-radius: 5px;
+}
+
+.status-item .label {
+  display: block;
+  color: #888;
+  font-size: 0.85rem;
+  margin-bottom: 5px;
+}
+
+.status-item span:not(.label) {
+  color: #00d9ff;
+  font-weight: bold;
+}
+
+/* Form Styles */
+.form-group {
+  margin-bottom: 20px;
+}
+
+label {
+  display: block;
+  color: #aaa;
+  margin-bottom: 5px;
+  margin-top: 10px;
+  font-size: 0.9rem;
+}
+
+input[type="text"],
+input[type="number"],
+select {
+  width: 100%;
+  padding: 10px;
+  background: #0f3460;
+  border: 1px solid #00adb5;
+  border-radius: 5px;
+  color: #eee;
+  font-size: 1rem;
+}
+
+input[type="text"]:focus,
+input[type="number"]:focus,
+select:focus {
+  outline: none;
+  border-color: #00d9ff;
+  box-shadow: 0 0 5px rgba(0, 217, 255, 0.3);
+}
+
+small {
+  display: block;
+  color: #888;
+  font-size: 0.8rem;
+  margin-top: 3px;
+}
+
+.city-group {
+  background: #0f3460;
+  padding: 15px;
+  border-radius: 5px;
+  margin-bottom: 10px;
+  border-left: 3px solid #00adb5;
+}
+
+/* Buttons */
+.form-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+button {
+  padding: 12px 24px;
+  border: none;
+  border-radius: 5px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.btn-primary {
+  background: #00adb5;
+  color: white;
+}
+
+.btn-primary:hover {
+  background: #00d9ff;
+}
+
+.btn-secondary {
+  background: #535c68;
+  color: white;
+}
+
+.btn-secondary:hover {
+  background: #6c757d;
+}
+
+.btn-warning {
+  background: #d63031;
+  color: white;
+}
+
+.btn-warning:hover {
+  background: #e17055;
+}
+
+/* Timezone Reference */
+.tz-reference {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 10px;
+}
+
+.tz-item {
+  padding: 8px 12px;
+  background: #0f3460;
+  border-radius: 5px;
+  font-size: 0.9rem;
+  border-left: 3px solid #00adb5;
+}
+
+.tz-item strong {
+  color: #00d9ff;
+  margin-right: 5px;
+}
+
+/* Footer */
+footer {
+  margin-top: 30px;
+  text-align: center;
+  color: #666;
+  font-size: 0.85rem;
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+  header h1 {
+    font-size: 1.5rem;
+  }
+
+  .form-actions {
+    flex-direction: column;
+  }
+
+  button {
+    width: 100%;
+  }
+
+  .status-grid {
+    grid-template-columns: 1fr;
+  }
+}

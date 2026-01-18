@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CYD World Clock - Configuration</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>CYD World Clock</h1>
+    <div class="sub">Configuration & Status</div>
+  </header>
+
+  <main>
+    <!-- Timezone Configuration -->
+    <section class="card">
+      <h2>Timezone Configuration</h2>
+      <form id="configForm">
+        <!-- Home City -->
+        <div class="form-group">
+          <h3>Home City (Reference Timezone)</h3>
+          <label for="homeSelect">Select City:</label>
+          <select id="homeSelect" name="homeSelect" required>
+            <option value="">-- Loading timezones --</option>
+          </select>
+          <div id="homeCustom" style="display: none; margin-top: 10px;">
+            <label for="homeCustomLabel">Custom City Name:</label>
+            <input type="text" id="homeCustomLabel" placeholder="e.g., New York" style="width: 100%; margin-bottom: 5px;">
+            <label for="homeCustomTz">Timezone String (POSIX):</label>
+            <input type="text" id="homeCustomTz" placeholder="e.g., EST5EDT,M3.2.0,M11.1.0" style="width: 100%; font-family: monospace;">
+          </div>
+          <input type="hidden" id="homeLabel" name="homeLabel">
+          <input type="hidden" id="homeTz" name="homeTz">
+          <small id="homeTzDisplay" style="color: #00d9ff; font-family: monospace;"></small>
+        </div>
+
+        <!-- Remote Cities -->
+        <div class="form-group">
+          <h3>Remote Cities (5)</h3>
+
+          <div class="city-group">
+            <label>City 1:</label>
+            <select id="remote0Select" name="remote0Select" required>
+              <option value="">-- Loading timezones --</option>
+            </select>
+            <div id="remote0Custom" style="display: none; margin-top: 5px;">
+              <input type="text" id="remote0CustomLabel" placeholder="City name" style="width: 48%; margin-right: 4%;">
+              <input type="text" id="remote0CustomTz" placeholder="TZ string" style="width: 48%; font-family: monospace;">
+            </div>
+            <input type="hidden" id="remote0Label" name="remote0Label">
+            <input type="hidden" id="remote0Tz" name="remote0Tz">
+            <small id="remote0TzDisplay" style="color: #00d9ff; font-family: monospace;"></small>
+          </div>
+
+          <div class="city-group">
+            <label>City 2:</label>
+            <select id="remote1Select" name="remote1Select" required>
+              <option value="">-- Loading timezones --</option>
+            </select>
+            <div id="remote1Custom" style="display: none; margin-top: 5px;">
+              <input type="text" id="remote1CustomLabel" placeholder="City name" style="width: 48%; margin-right: 4%;">
+              <input type="text" id="remote1CustomTz" placeholder="TZ string" style="width: 48%; font-family: monospace;">
+            </div>
+            <input type="hidden" id="remote1Label" name="remote1Label">
+            <input type="hidden" id="remote1Tz" name="remote1Tz">
+            <small id="remote1TzDisplay" style="color: #00d9ff; font-family: monospace;"></small>
+          </div>
+
+          <div class="city-group">
+            <label>City 3:</label>
+            <select id="remote2Select" name="remote2Select" required>
+              <option value="">-- Loading timezones --</option>
+            </select>
+            <div id="remote2Custom" style="display: none; margin-top: 5px;">
+              <input type="text" id="remote2CustomLabel" placeholder="City name" style="width: 48%; margin-right: 4%;">
+              <input type="text" id="remote2CustomTz" placeholder="TZ string" style="width: 48%; font-family: monospace;">
+            </div>
+            <input type="hidden" id="remote2Label" name="remote2Label">
+            <input type="hidden" id="remote2Tz" name="remote2Tz">
+            <small id="remote2TzDisplay" style="color: #00d9ff; font-family: monospace;"></small>
+          </div>
+
+          <div class="city-group">
+            <label>City 4:</label>
+            <select id="remote3Select" name="remote3Select" required>
+              <option value="">-- Loading timezones --</option>
+            </select>
+            <div id="remote3Custom" style="display: none; margin-top: 5px;">
+              <input type="text" id="remote3CustomLabel" placeholder="City name" style="width: 48%; margin-right: 4%;">
+              <input type="text" id="remote3CustomTz" placeholder="TZ string" style="width: 48%; font-family: monospace;">
+            </div>
+            <input type="hidden" id="remote3Label" name="remote3Label">
+            <input type="hidden" id="remote3Tz" name="remote3Tz">
+            <small id="remote3TzDisplay" style="color: #00d9ff; font-family: monospace;"></small>
+          </div>
+
+          <div class="city-group">
+            <label>City 5:</label>
+            <select id="remote4Select" name="remote4Select" required>
+              <option value="">-- Loading timezones --</option>
+            </select>
+            <div id="remote4Custom" style="display: none; margin-top: 5px;">
+              <input type="text" id="remote4CustomLabel" placeholder="City name" style="width: 48%; margin-right: 4%;">
+              <input type="text" id="remote4CustomTz" placeholder="TZ string" style="width: 48%; font-family: monospace;">
+            </div>
+            <input type="hidden" id="remote4Label" name="remote4Label">
+            <input type="hidden" id="remote4Tz" name="remote4Tz">
+            <small id="remote4TzDisplay" style="color: #00d9ff; font-family: monospace;"></small>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn-primary">Save Configuration</button>
+          <button type="button" class="btn-secondary" id="reloadBtn">Reload from Device</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- System Actions -->
+    <section class="card">
+      <h2>System Actions</h2>
+      <div class="form-actions">
+        <button type="button" class="btn-secondary" id="rebootBtn">Reboot Device</button>
+        <button type="button" class="btn-warning" id="resetWifiBtn">Reset WiFi Credentials</button>
+      </div>
+      <small>Note: Reset WiFi will erase stored credentials and reboot the device into AP mode.</small>
+    </section>
+
+    <!-- System Status -->
+    <section class="card">
+      <h2>System Status</h2>
+      <div class="status-grid">
+        <div class="status-item">
+          <span class="label">Firmware:</span>
+          <span id="firmware">--</span>
+        </div>
+        <div class="status-item">
+          <span class="label">Hostname:</span>
+          <span id="hostname">--</span>
+        </div>
+        <div class="status-item">
+          <span class="label">WiFi SSID:</span>
+          <span id="wifi_ssid">--</span>
+        </div>
+        <div class="status-item">
+          <span class="label">IP Address:</span>
+          <span id="wifi_ip">--</span>
+        </div>
+        <div class="status-item">
+          <span class="label">Uptime:</span>
+          <span id="uptime">--</span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p><strong>CYD World Clock</strong> - ESP32 + ILI9341 Display</p>
+    <p style="margin-top: 10px;">
+      Created by <strong>Anthony Clarke</strong><br>
+      <a href="https://github.com/anthonyjclarke/CYD_Family_Clock" target="_blank" style="color: #00d9ff; text-decoration: none;">GitHub: @anthonyjclarke</a> |
+      <a href="https://bsky.app/profile/anthonyjclarke.bsky.social" target="_blank" style="color: #00d9ff; text-decoration: none;">BlueSky: @anthonyjclarke.bsky.social</a>
+    </p>
+    <p style="margin-top: 5px; font-size: 0.8rem; color: #888;">
+      Source: <a href="https://github.com/anthonyjclarke/CYD_Family_Clock" target="_blank" style="color: #00adb5; text-decoration: none;">github.com/anthonyjclarke/CYD_Family_Clock</a>
+    </p>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
