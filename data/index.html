@@ -148,10 +148,29 @@
           <span id="wifi_ip">--</span>
         </div>
         <div class="status-item">
+          <span class="label">Signal:</span>
+          <span id="wifi_rssi">--</span>
+        </div>
+        <div class="status-item">
           <span class="label">Uptime:</span>
           <span id="uptime">--</span>
         </div>
+        <div class="status-item">
+          <span class="label">Free Heap:</span>
+          <span id="freeHeap">--</span>
+        </div>
+        <div class="status-item">
+          <span class="label">Debug Level:</span>
+          <select id="debugLevel" style="padding: 2px 5px;">
+            <option value="0">0 - Off</option>
+            <option value="1">1 - Error</option>
+            <option value="2">2 - Warn</option>
+            <option value="3">3 - Info</option>
+            <option value="4">4 - Verbose</option>
+          </select>
+        </div>
       </div>
+      <small style="display: block; margin-top: 10px;">Touch the screen to view diagnostics. Status auto-refreshes every 30 seconds.</small>
     </section>
   </main>
 
