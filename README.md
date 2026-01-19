@@ -83,21 +83,25 @@ A feature-rich world clock display for the ESP32 CYD (Cheap Yellow Display) feat
 1. **Clone or download this repository**
 
 2. **Build the firmware:**
+
    ```bash
    pio run
    ```
 
 3. **Upload firmware to ESP32:**
+
    ```bash
    pio run -t upload
    ```
 
 4. **Upload web UI files to LittleFS:**
+
    ```bash
    pio run -t uploadfs
    ```
 
 5. **Monitor serial output (optional):**
+
    ```bash
    pio device monitor
    ```
@@ -105,12 +109,14 @@ A feature-rich world clock display for the ESP32 CYD (Cheap Yellow Display) feat
 ### First-Time Setup
 
 1. **WiFi Configuration:**
+
    - On first boot, device creates AP: `CYD-WorldClock-Setup`
    - Connect to this AP with your phone/laptop
    - Enter your WiFi credentials in the captive portal
    - Device will connect and display IP address on screen
 
 2. **Access Web Interface:**
+
    - Note the IP address shown on the display
    - Open browser to `http://<device-ip>`
    - Configure your home city and 5 remote cities
@@ -177,15 +183,18 @@ Edit `src/main.cpp` to customize:
 
 ## OTA Updates
 
-### Configuration
+### OTA Configuration
+
 - **Hostname**: `CYD-WorldClock`
 - **Password**: `change-me` (⚠️ **Change this in production!**)
 
 ### Using Arduino IDE
+
 1. Tools → Port → Select network port `CYD-WorldClock at <ip>`
 2. Upload as normal
 
 ### Using PlatformIO
+
 ```bash
 pio run -t upload --upload-port <device-ip>
 ```
@@ -195,6 +204,7 @@ Progress bar is displayed on the TFT during updates.
 ## Debug System
 
 ### Debug Levels
+
 - **0 (Off)**: No debug output
 - **1 (Error)**: Critical errors only
 - **2 (Warn)**: Warnings + errors
@@ -202,9 +212,11 @@ Progress bar is displayed on the TFT during updates.
 - **4 (Verbose)**: All debug output
 
 ### Serial Monitor
+
 Baud rate: **115200**
 
 Example output:
+
 ```
 [INFO] CYD World Clock v2.0.0 starting...
 [INFO] ✓ LittleFS mounted
@@ -218,21 +230,25 @@ Example output:
 ## Troubleshooting
 
 ### Display Issues
+
 - **Blank screen**: Check backlight pin (GPIO 21), verify TFT_eSPI config
 - **Text cutoff**: Verify font files uploaded to LittleFS
 - **Wrong colors**: Check `include/User_Setup.h` for correct driver
 
 ### WiFi Issues
+
 - **Can't connect**: Use web UI to reset WiFi credentials
 - **AP not visible**: Power cycle device, wait 30 seconds
 - **Connection timeout**: Check WiFi signal strength, verify credentials
 
 ### Web Interface Issues
+
 - **Can't access**: Verify IP address on display matches URL
 - **Changes not saved**: Check browser console for errors
 - **Need to reboot**: After config changes, reboot device to apply
 
 ### NTP Sync Issues
+
 - **Time incorrect**: Check WiFi connection, verify timezone string
 - **Sync fails**: Firewall may be blocking NTP (port 123 UDP)
 
