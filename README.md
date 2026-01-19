@@ -4,14 +4,15 @@ With Family all around the Globe I wanted to not have to open Apps on phone, clo
 
 A feature-rich world clock display for the ESP32 CYD (Cheap Yellow Display) featuring a 2.8" ILI9341 TFT screen. Display multiple timezones simultaneously with a beautiful interface, web-based configuration, and OTA updates.
 
-![Version](https://img.shields.io/badge/version-2.0.0-blue)
+![Version](https://img.shields.io/badge/version-2.1.0-blue)
 ![Platform](https://img.shields.io/badge/platform-ESP32-green)
 ![Framework](https://img.shields.io/badge/framework-Arduino-orange)
 
 ## Features
 
 ### Display
-- **5 Timezone Display**: Configurable home city + 4 remote cities
+
+- **6 Timezone Display**: Configurable home city + 5 remote cities
 - **Centered Layout**: Title, date, and city times in clean rows
 - **Smooth Fonts**: Optional TFT_eSPI smooth fonts from LittleFS
 - **Visual Indicators**:
@@ -20,18 +21,22 @@ A feature-rich world clock display for the ESP32 CYD (Cheap Yellow Display) feat
   - Color-coded status messages
 
 ### Configuration
+
 - **Web-Based Config**: Configure all cities via browser interface
 - **NVS Storage**: Persistent timezone configuration across reboots
 - **WiFiManager**: Easy WiFi setup with captive portal
 - **Default Cities**: Sydney, Vancouver, London, Nairobi, Denver
 
 ### Connectivity
+
 - **WiFi**: Auto-connect with fallback AP mode
 - **OTA Updates**: Wireless firmware updates with progress bar
 - **Web Server**: REST API and static file serving
 - **NTP Sync**: Automatic time synchronization on boot
 
 ### Developer Features
+
+- **Touch Screen Diagnostics**: Touch to view system info, network status, and recent logs
 - **5-Level Debug System**: Runtime-adjustable logging (Off/Error/Warn/Info/Verbose)
 - **Startup Display**: Boot messages shown on screen
 - **Splash Screen**: Globe animation on startup
@@ -43,7 +48,7 @@ A feature-rich world clock display for the ESP32 CYD (Cheap Yellow Display) feat
 - **Display**: ILI9341 2.8" TFT (240x320 pixels)
 - **Power**: USB 5V
 
-### Pin Configuration
+### Pin Configuration (Display)
 
 | Function | GPIO | Notes |
 |----------|------|-------|
@@ -54,6 +59,16 @@ A feature-rich world clock display for the ESP32 CYD (Cheap Yellow Display) feat
 | TFT_DC   | 2  | Data/command |
 | TFT_RST  | -1 | Tied to ESP32 RST |
 | TFT_BL   | 21 | Backlight (active HIGH) |
+
+### Pin Configuration (Touch Screen)
+
+| Function   | GPIO | Notes                   |
+|------------|------|-------------------------|
+| Touch IRQ  | 36   | T_IRQ (active LOW)      |
+| Touch MOSI | 32   | T_DIN                   |
+| Touch MISO | 39   | T_OUT (board-specific)  |
+| Touch CLK  | 25   | T_CLK                   |
+| Touch CS   | 33   | T_CS                    |
 
 ## Installation
 
@@ -98,26 +113,31 @@ A feature-rich world clock display for the ESP32 CYD (Cheap Yellow Display) feat
 2. **Access Web Interface:**
    - Note the IP address shown on the display
    - Open browser to `http://<device-ip>`
-   - Configure your home city and 4 remote cities
+   - Configure your home city and 5 remote cities
    - Click "Save Configuration"
-   - Reboot device to apply changes
+   - Changes apply immediately (no reboot needed)
 
 ## Web Interface
 
 The web UI provides:
 
-- **System Status**: Firmware version, uptime, WiFi info
+- **System Status**: Firmware version, uptime, WiFi info, heap memory
+- **Debug Level Control**: Adjust logging verbosity in real-time (Off/Error/Warn/Info/Verbose)
 - **Timezone Configuration**:
   - Home city (reference timezone)
-  - 4 remote cities
-  - POSIX timezone string inputs
-- **Common Timezone Reference**: Quick copy for popular cities
-- **WiFi Reset**: Clear credentials and restart
+  - 5 remote cities
+  - 102 predefined cities across 13 regions
+  - Custom timezone entry for unlisted cities
+- **System Actions**: Reboot device, reset WiFi credentials
+- **Auto-refresh**: Status updates every 30 seconds
 
 ### API Endpoints
 
 - `GET /api/state` - Returns system status and current configuration (JSON)
+- `GET /api/timezones` - Returns list of 102 predefined timezones (JSON)
 - `POST /api/config` - Update timezone configuration (JSON body)
+- `POST /api/debug-level` - Change debug level at runtime (JSON body)
+- `POST /api/reboot` - Reboot device
 - `POST /api/reset-wifi` - Clear WiFi credentials and reboot
 
 ## Configuration
@@ -240,14 +260,15 @@ CYD_Family_Clock/
 
 ## Memory Usage
 
-- **Flash**: 1,010,529 bytes (77.1% of 1.3MB)
-- **RAM**: 51,024 bytes (15.6% of 320KB)
+- **Flash**: 1,028,837 bytes (78.5% of 1.3MB)
+- **RAM**: 53,480 bytes (16.3% of 320KB)
 
 ## Dependencies
 
 - **TFT_eSPI** @ ^2.5.43 - Display driver
 - **WiFiManager** @ ^2.0.16-rc.2 - WiFi configuration
 - **ArduinoJson** @ ^6.21.3 - JSON parsing (minimal usage)
+- **XPT2046_Touchscreen** @ 1.4.0 - Touch screen driver
 - **ArduinoOTA** @ 2.0.0 - OTA updates
 - **WebServer** @ 2.0.0 - HTTP server
 - **Preferences** @ 2.0.0 - NVS storage
