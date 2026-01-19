@@ -5,6 +5,114 @@ All notable changes to the CYD World Clock project will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-01-19
+
+### Added - Touch Screen Diagnostics
+
+#### Touch Screen Support
+- **Touch screen diagnostics display** - Touch screen to view system information
+- **15-second auto-dismiss** - Diagnostics screen automatically closes after 15 seconds
+- **Manual dismiss** - Touch screen again to immediately close diagnostics
+- **Responsive touch polling** - 50ms polling rate for immediate response
+- **Edge detection** - Only triggers on touch-down edge to prevent false triggers
+- **500ms debouncing** - Prevents accidental double-touches
+
+#### Diagnostics Screen Content
+
+- **System information**:
+  - Firmware version
+  - Uptime (formatted: days/hours/mins/secs)
+  - Free heap memory
+  - Current debug level (0-4)
+- **Network information**:
+  - WiFi SSID
+  - IP address
+  - Signal strength (RSSI in dBm)
+- **Recent logs**:
+  - Last 20 log entries from circular buffer
+  - Timestamp, level, and message for each entry
+  - Chronological order (oldest to newest)
+
+#### Web UI Enhancements
+
+- **Debug level selector** added to System Status section
+- **Real-time debug level adjustment** via web interface
+- **Success notification** when debug level changed
+- **Auto-refresh status** - System status updates every 30 seconds
+- **Helper functions** for formatting bytes and uptime
+
+#### API Endpoints
+
+- **POST /api/debug-level** - Change debug level at runtime
+- **GET /api/debug** - Return recent logs and debug info (for future use)
+
+### Changed
+
+#### Performance Optimizations
+
+- **Main loop timing** - Changed from 1000ms delay to 50ms polling
+- **Display update throttling** - Clock display updates only once per second
+- **Touch responsiveness** - Touch detected within 50ms instead of up to 1 second
+- **Separate timing** - Touch polling and display updates now independent
+
+#### Serial Output
+
+- **Compressed debug format** - All 6 cities now on single line
+- **Pipe separators** - " | " used between cities instead of newlines
+- **Format example**: `Nairobi (HOME) 07:24 | Vancouver 20:24 (PREV DAY) | London 04:24 | ...`
+- **Reduced verbosity** - Easier to read time progression at a glance
+
+### Fixed
+
+#### Display Issues
+
+- **"PREV DAY" indicator** - Now displays correctly after exiting diagnostics
+- **Font reload** - `currentSmoothFont` reset to `nullptr` when exiting diagnostics
+- **State cache** - All cached state arrays (`lastTimes`, `lastPrevDay`, `lastColonState`) reset on diagnostics exit
+- **Smooth fonts** - Properly reload when returning from bitmap font diagnostics screen
+
+#### Touch Implementation
+
+- **Correct pin mapping** - GPIO36 for IRQ, GPIO39 for MISO (board-specific)
+- **IRQ-based detection** - Direct pin reading instead of library's `touched()` method
+- **Separate SPI bus** - VSPI for touch, doesn't interfere with display
+
+### Technical Details
+
+#### Dependencies Added
+
+- **XPT2046_Touchscreen** library @ 1.4.0 - Touch screen driver
+
+#### Pin Configuration (ESP32-2432S028)
+
+- Touch IRQ: GPIO36 (T_IRQ, active LOW)
+- Touch MOSI: GPIO32 (T_DIN)
+- Touch MISO: GPIO39 (T_OUT) - **Different from common documentation**
+- Touch CLK: GPIO25 (T_CLK)
+- Touch CS: GPIO33 (T_CS)
+
+#### Memory Impact
+
+- **Flash**: 1,028,837 bytes (78.5%) - Increased ~18KB from v2.0.0
+- **RAM**: 53,480 bytes (16.3%) - Increased ~2.5KB from v2.0.0
+
+#### Code Statistics
+
+- **main.cpp**: ~1,350 lines (expanded from ~760)
+- **New functions**: `drawDiagnosticsScreen()`, `handleTouch()`, `checkDiagnosticsTimeout()`, `isTouched()`
+- **New variables**: Circular log buffer (20 entries), diagnostics state tracking
+
+### Documentation
+
+#### Updated Files
+
+- **CLAUDE.md** - Added comprehensive touch screen section with implementation details
+- **CHANGELOG.md** - This version's changes
+- **data/index.html** - Added debug level selector and helper text
+- **data/app.js** - Added debug level handler and formatting helpers
+
+---
+
 ## [2.0.0] - 2026-01-18
 
 ### Added - Major Feature Update

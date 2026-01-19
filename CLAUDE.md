@@ -370,11 +370,85 @@ Components:
 - end_rule: When DST ends
 ```
 
+## Touch Screen Diagnostics (v2.1.0)
+
+**Status**: ENABLED - Touch triggers diagnostics display
+
+### Pin Configuration (ESP32-2432S028)
+
+Through extensive debugging, discovered correct pin mapping differs from common documentation:
+
+- **Touch IRQ**: GPIO36 (T_IRQ) - Active LOW when touched
+- **Touch MOSI**: GPIO32 (T_DIN)
+- **Touch MISO**: GPIO39 (T_OUT) - **Different from common docs**
+- **Touch CLK**: GPIO25 (T_CLK)
+- **Touch CS**: GPIO33 (T_CS)
+- **SPI Bus**: VSPI (separate from display)
+
+### Touch Detection Method
+
+The `XPT2046_Touchscreen::touched()` method always returns `true` on this board variant. Solution: use direct IRQ pin reading instead.
+
+```cpp
+bool isTouched() {
+  return (digitalRead(XPT2046_IRQ) == LOW);  // Active LOW when touched
+}
+```
+
+### Diagnostics Screen
+
+Touch screen to display system diagnostics for 15 seconds (or touch again to dismiss):
+
+**System Information:**
+
+- Firmware version
+- Uptime (formatted: days/hours/mins)
+- Free heap memory
+- Debug level (0-4)
+
+**Network Information:**
+
+- WiFi SSID
+- IP address
+- Signal strength (RSSI)
+
+**Recent Logs:**
+
+- Last 20 log entries from circular buffer
+- Formatted with timestamp, level, and message
+
+### Touch Implementation Details
+
+1. **Edge Detection**: Only triggers on touch-down edge (prevents false triggers)
+2. **Debouncing**: 500ms debounce window
+3. **Polling Rate**: 50ms (fast enough for responsive touch)
+4. **Display Rate**: 1 second (clock updates only once per second)
+5. **Auto-Dismiss**: 15 seconds timeout or manual touch to exit
+
+### Font Management for Diagnostics
+
+Diagnostics uses bitmap fonts to maximize screen space. When exiting diagnostics, `currentSmoothFont` is reset to `nullptr` to force reload of smooth fonts for the clock display.
+
+```cpp
+// Exit diagnostics
+currentSmoothFont = nullptr;  // Force smooth font reload
+drawStaticLayout();
+// Reset all cached state to force full redraw
+for (int i = 0; i < 6; i++) {
+  lastTimes[i] = "";
+  lastPrevDay[i] = false;
+  lastColonState[i] = false;
+}
+```
+
 ## Future Enhancements
+
 - [ ] WiFi reconnect logic in main loop
 - [ ] Automatic NTP resync every 24 hours
-- [ ] Touch support for city selection
-- [ ] API endpoint for debug level adjustment
+- [ ] Tidy up WebUI - selecting remote cities and dropdown not intuitive
+- [ ] Add display mirror of TFT to WebUI (as per other clock projects)
+- [x] ~~Touch support for diagnostics~~ - **COMPLETED v2.1.0**
+- [x] ~~API endpoint for debug level adjustment~~ - **COMPLETED v2.0.0**
 - [ ] Weather API integration per city
 - [ ] Temperature/humidity display
 - [ ] User-configurable color schemes
@@ -382,13 +456,13 @@ Components:
 - [ ] Multiple display modes (clock only, weather, mixed)
 
 ## Version History
+
 See [CHANGELOG.md](CHANGELOG.md) for detailed version history.
 
-**Current Version**: 2.0.0 (2026-01-18)
-- Major architecture update from v1.0.0
-- Added web-based configuration system
-- Added 6th city support (1 home + 5 remote)
-- Added custom timezone entry feature
-- Added OTA update support
-- Added 5-level debug system
-- Added NVS persistent storage
+**Current Version**: 2.1.0 (2026-01-19)
+
+- Added touch screen diagnostics display
+- Added WebUI debug level selector
+- Fixed "PREV DAY" indicator display after exiting diagnostics
+- Compressed serial debug output to single-line format
+- Implemented 50ms touch polling for responsive interaction

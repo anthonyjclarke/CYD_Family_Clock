@@ -13,6 +13,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('reloadBtn').addEventListener('click', loadState);
   document.getElementById('rebootBtn').addEventListener('click', handleReboot);
   document.getElementById('resetWifiBtn').addEventListener('click', handleResetWiFi);
+  document.getElementById('debugLevel').addEventListener('change', handleDebugLevelChange);
 
   // Timezone dropdown change listeners
   document.getElementById('homeSelect').addEventListener('change', updateTimezoneFields);
@@ -202,7 +203,10 @@ async function loadState() {
     document.getElementById('hostname').textContent = data.hostname || '--';
     document.getElementById('wifi_ssid').textContent = data.wifi_ssid || '--';
     document.getElementById('wifi_ip').textContent = data.wifi_ip || '--';
+    document.getElementById('wifi_rssi').textContent = (data.wifi_rssi || '--') + ' dBm';
     document.getElementById('uptime').textContent = formatUptime(data.uptime || 0);
+    document.getElementById('freeHeap').textContent = formatBytes(data.freeHeap || 0);
+    document.getElementById('debugLevel').value = data.debugLevel || 3;
 
     // Update form fields
     if (data.homeCity) {
@@ -327,6 +331,42 @@ async function handleResetWiFi() {
   } catch (error) {
     console.error('Error resetting WiFi:', error);
     showNotification('Error resetting WiFi credentials', 'error');
+  }
+}
+
+// Handle debug level change
+async function handleDebugLevelChange(event) {
+  const level = parseInt(event.target.value);
+
+  try {
+    const response = await fetch('/api/debug-level', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ level: level })
+    });
+
+    if (!response.ok) throw new Error('Failed to set debug level');
+
+    const levelNames = ['Off', 'Error', 'Warn', 'Info', 'Verbose'];
+    showNotification(`Debug level set to ${level} (${levelNames[level]})`, 'success');
+    console.log('Debug level changed to:', level);
+  } catch (error) {
+    console.error('Error setting debug level:', error);
+    showNotification('Error setting debug level', 'error');
+    loadState(); // Reload to restore actual value
+  }
+}
+
+// Helper: Format bytes in human-readable format
+function formatBytes(bytes) {
+  if (bytes >= 1024 * 1024) {
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  } else if (bytes >= 1024) {
+    return (bytes / 1024).toFixed(1) + ' KB';
+  } else {
+    return bytes + ' B';
   }
 }
 
