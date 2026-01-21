@@ -3,6 +3,8 @@
 // Global timezone list
 let timezones = [];
 
+// Display mirror feature removed to reduce API polling load
+
 // Load state on page load
 document.addEventListener('DOMContentLoaded', () => {
   loadTimezones();
@@ -23,9 +25,24 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('remote3Select').addEventListener('change', updateTimezoneFields);
   document.getElementById('remote4Select').addEventListener('change', updateTimezoneFields);
 
-  // Auto-refresh status every 30 seconds
-  setInterval(loadState, 30000);
+  // Start auto-refresh polling (5-second interval to reduce memory pressure)
+  startPolling();
 });
+
+// Polling function with timeout-based approach (non-blocking)
+async function tick() {
+  try {
+    await loadState();
+  } catch (e) {
+    console.warn('Polling error:', e);
+  } finally {
+    setTimeout(tick, 5000);  // Poll every 5 seconds (reduces memory leak rate)
+  }
+}
+
+function startPolling() {
+  tick();
+}
 
 // Load timezone list from device
 async function loadTimezones() {

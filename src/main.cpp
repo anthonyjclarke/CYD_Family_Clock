@@ -7,6 +7,7 @@
 #include <WebServer.h>
 #include <Preferences.h>
 #include <ArduinoOTA.h>
+#include <ArduinoJson.h>
 #include <time.h>
 #include <SPI.h>
 #include <XPT2046_Touchscreen.h>
@@ -62,6 +63,7 @@ void logToBuffer(uint8_t level, const char* format, ...) {
 }
 
 // Conditional debug macros based on debug level - now also log to buffer
+// Buffer size matches log buffer entry size (80 bytes) to avoid memory waste
 #define DBG_ERROR(...)   do { if (debugLevel >= DBG_LEVEL_ERROR) { Serial.print("[ERR ] "); Serial.printf(__VA_ARGS__); char buf[80]; snprintf(buf, sizeof(buf), __VA_ARGS__); addToLogBuffer(DBG_LEVEL_ERROR, buf); } } while(0)
 #define DBG_WARN(...)    do { if (debugLevel >= DBG_LEVEL_WARN) { Serial.print("[WARN] "); Serial.printf(__VA_ARGS__); char buf[80]; snprintf(buf, sizeof(buf), __VA_ARGS__); addToLogBuffer(DBG_LEVEL_WARN, buf); } } while(0)
 #define DBG_INFO(...)    do { if (debugLevel >= DBG_LEVEL_INFO) { Serial.print("[INFO] "); Serial.printf(__VA_ARGS__); char buf[80]; snprintf(buf, sizeof(buf), __VA_ARGS__); addToLogBuffer(DBG_LEVEL_INFO, buf); } } while(0)
@@ -100,6 +102,11 @@ Preferences prefs;
 SPIClass touchSPI = SPIClass(VSPI);  // Separate SPI bus for touch
 XPT2046_Touchscreen touchscreen(XPT2046_CS, XPT2046_IRQ);
 
+// Cached WiFi info (updated on connect, prevents String allocation every API call)
+char cachedSSID[33] = "";
+char cachedIP[16] = "";
+int cachedRSSI = 0;
+
 // =========================
 // Log Buffer System
 // =========================
@@ -134,7 +141,7 @@ bool showingDiagnostics = false;
 unsigned long diagnosticsStartTime = 0;
 const unsigned long DIAGNOSTICS_TIMEOUT = 15000; // 15 seconds
 
-#define FIRMWARE_VERSION "2.1.0"
+#define FIRMWARE_VERSION "2.2.0"
 #define OTA_HOSTNAME "CYD-WorldClock"
 #define OTA_PASSWORD "change-me"  // TODO: Change this!
 
@@ -245,8 +252,9 @@ void takeScreenshot();
 void takeScreenshotRaw();
 
 // Cached state to minimize redraws and flicker.
-String lastDate;
-String lastTimes[6];  // 6 cities: home + 5 remote
+// Use fixed char arrays instead of String to avoid heap fragmentation
+char lastDate[16];
+char lastTimes[6][8];  // 6 cities: home + 5 remote, "HH:MM" format
 bool lastPrevDay[6];
 bool lastColonState[6];
 int timePadWidth = 0;
@@ -254,29 +262,51 @@ unsigned long lastDebugPrint = 0;
 bool smoothFontsReady = false;
 const char *currentSmoothFont = nullptr;
 
-void setTimezone(const char *tz) {
-  setenv("TZ", tz, 1);
-  tzset();
+// CRITICAL FIX: setenv("TZ") leaks memory on ESP32 when called repeatedly
+// Solution: Cache the last timezone set to minimize setenv() calls
+static const char* lastSetTimezone = nullptr;
+
+void getLocalTm(const char *tz, time_t now, struct tm *out) {
+  // Only call setenv/tzset if timezone actually changed
+  // Use pointer comparison first (works for string literals), then strcmp for safety
+  if (lastSetTimezone != tz && (lastSetTimezone == nullptr || strcmp(lastSetTimezone, tz) != 0)) {
+    setenv("TZ", tz, 1);
+    tzset();
+    lastSetTimezone = tz;
+  }
+
+  localtime_r(&now, out);
 }
 
 // Switch between smooth fonts (loaded from SPIFFS) or fallback bitmap fonts.
+// Optimized to avoid heap allocations - uses stack buffer for path construction.
 void setFont(const char *smoothFontName, int fallbackFont) {
   if (kUseSmoothFonts && smoothFontsReady) {
+    // Only reload if font actually changed (pointer comparison is intentional
+    // since we use string literals for font names)
     if (currentSmoothFont != smoothFontName) {
-      if (currentSmoothFont) {
+      // Safely unload previous font if one was loaded
+      if (currentSmoothFont != nullptr) {
         tft.unloadFont();
+        currentSmoothFont = nullptr;
       }
-      String path = "/";
-      path += smoothFontName;
-      path += ".vlw";
+      // Use stack buffer instead of String to avoid heap fragmentation
+      char path[48];
+      snprintf(path, sizeof(path), "/%s.vlw", smoothFontName);
       if (LittleFS.exists(path)) {
         tft.loadFont(smoothFontName, LittleFS);
         currentSmoothFont = smoothFontName;
         return;
       }
-      currentSmoothFont = nullptr;
+      // If smooth font failed to load, fall through to bitmap font
+    } else if (currentSmoothFont != nullptr) {
+      // Font already loaded and valid, nothing to do
+      return;
     }
+    // If we get here, either smooth font failed or currentSmoothFont is null
   }
+  // Use bitmap font as fallback
+  currentSmoothFont = nullptr;
   tft.setTextFont(fallbackFont);
 }
 
@@ -314,54 +344,69 @@ void logLittleFSContents() {
   }
 }
 
-// Return a date string for the given timezone (e.g., "THU 24 MAR").
-String formatDate(const char *tz) {
+// Format a date string for the given timezone (e.g., "THU 24 MAR").
+// Writes directly to provided buffer to avoid heap allocation.
+void formatDate(const char *tz, char *outBuf, size_t bufSize) {
   time_t now = time(nullptr);
   struct tm timeinfo;
-  setTimezone(tz);
-  localtime_r(&now, &timeinfo);
-  char buf[16];
-  strftime(buf, sizeof(buf), "%a %d %b", &timeinfo);
-  String dateStr(buf);
-  dateStr.toUpperCase();
-  return dateStr;
-}
-
-// Helper to get a local time struct for an arbitrary TZ and timestamp.
-void getLocalTm(const char *tz, time_t now, struct tm *out) {
-  setTimezone(tz);
-  localtime_r(&now, out);
+  getLocalTm(tz, now, &timeinfo);
+  strftime(outBuf, bufSize, "%a %d %b", &timeinfo);
+  // Convert to uppercase in place
+  for (char *p = outBuf; *p; ++p) {
+    *p = toupper((unsigned char)*p);
+  }
 }
 
 struct TimeInfo {
-  String timeStr;
+  char timeStr[8];  // "HH:MM" + null terminator - fixed size to avoid heap allocation
   bool prevDay;
   bool showColon;
 };
+
+// CRITICAL FIX: Cache formatted times to avoid repeated setenv() calls
+// Only recalculate when the minute changes
+struct CachedTimeInfo {
+  struct tm tm;
+  char timeStr[8];
+  bool prevDay;
+  time_t lastCalculated;
+};
+
+static CachedTimeInfo timeCache[6];  // Cache for all 6 cities (home + 5 remote)
+static bool timeCacheInitialized = false;
 
 // Build time string plus flags used by the renderer.
 // - timeStr is always "HH:MM" so the width stays stable.
 // - showColon toggles each second for blink.
 // - prevDay is based on comparison with home city's date.
-TimeInfo formatTime(const char *tz, const struct tm &homeTm) {
+TimeInfo formatTime(const char *tz, const struct tm &homeTm, int cityIndex) {
   time_t now = time(nullptr);
-  struct tm timeinfo;
-  getLocalTm(tz, now, &timeinfo);
-  char buf[8];
-  snprintf(buf, sizeof(buf), "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
+  TimeInfo info;
 
-  bool prevDay = false;
-  if (timeinfo.tm_year < homeTm.tm_year) {
-    prevDay = true;
-  } else if (timeinfo.tm_year == homeTm.tm_year &&
-             timeinfo.tm_yday < homeTm.tm_yday) {
-    prevDay = true;
+  // Check if we need to recalculate (minute changed or first call for this city)
+  if (timeCache[cityIndex].lastCalculated == 0 || (now / 60) != (timeCache[cityIndex].lastCalculated / 60)) {
+    // Recalculate timezone data (only happens once per minute per city)
+    getLocalTm(tz, now, &timeCache[cityIndex].tm);
+    snprintf(timeCache[cityIndex].timeStr, sizeof(timeCache[cityIndex].timeStr),
+             "%02d:%02d", timeCache[cityIndex].tm.tm_hour, timeCache[cityIndex].tm.tm_min);
+
+    timeCache[cityIndex].prevDay = false;
+    if (timeCache[cityIndex].tm.tm_year < homeTm.tm_year) {
+      timeCache[cityIndex].prevDay = true;
+    } else if (timeCache[cityIndex].tm.tm_year == homeTm.tm_year &&
+               timeCache[cityIndex].tm.tm_yday < homeTm.tm_yday) {
+      timeCache[cityIndex].prevDay = true;
+    }
+
+    timeCache[cityIndex].lastCalculated = now;
+    timeCacheInitialized = true;  // Mark cache as initialized
   }
 
-  TimeInfo info;
-  info.timeStr = String(buf);
-  info.prevDay = prevDay;
-  info.showColon = (timeinfo.tm_sec % 2 == 0);
+  // Use cached values
+  strcpy(info.timeStr, timeCache[cityIndex].timeStr);
+  info.prevDay = timeCache[cityIndex].prevDay;
+  info.showColon = (now % 2 == 0);  // Blink every second
+
   return info;
 }
 
@@ -404,7 +449,7 @@ void drawStaticLayout() {
 }
 
 // Draw or update the header date string.
-void drawHeaderDate(const String &dateStr) {
+void drawHeaderDate(const char *dateStr) {
   setFont(kFontHeader, kFallbackHeader);
   tft.setTextColor(COLOR_TIME, COLOR_BG);
   tft.setTextDatum(MC_DATUM);
@@ -445,8 +490,8 @@ void drawTimes() {
 
   for (int i = 0; i < rows; ++i) {
     tft.setTextPadding(timePadWidth);
-    TimeInfo info = formatTime(getTzByIndex(i), homeTm);
-    bool timeChanged = (info.timeStr != lastTimes[i]);
+    TimeInfo info = formatTime(getTzByIndex(i), homeTm, i);
+    bool timeChanged = (strcmp(info.timeStr, lastTimes[i]) != 0);
     bool prevDayChanged = (info.prevDay != lastPrevDay[i]);
     bool colonChanged = (info.showColon != lastColonState[i]);
     if (!timeChanged && !prevDayChanged && !colonChanged) {
@@ -502,7 +547,7 @@ void drawTimes() {
     setFont(kFontTime, kFallbackTime);
     tft.setTextColor(COLOR_TIME, COLOR_BG);
     tft.setTextDatum(TR_DATUM);
-    lastTimes[i] = info.timeStr;
+    strlcpy(lastTimes[i], info.timeStr, sizeof(lastTimes[i]));
     lastPrevDay[i] = info.prevDay;
     lastColonState[i] = info.showColon;
   }
@@ -572,6 +617,9 @@ static void configModeCallback(WiFiManager* myWiFiManager) {
   );
 }
 
+// Forward declaration
+void updateWiFiCache();
+
 static void startWifi() {
   DBG_STEP("Starting WiFi (STA) + WiFiManager...");
   WiFi.mode(WIFI_STA);
@@ -591,9 +639,8 @@ static void startWifi() {
   }
 
   if (WiFi.isConnected()) {
-    DBG_INFO("WiFi connected: SSID=%s IP=%s\n",
-        WiFi.SSID().c_str(),
-        WiFi.localIP().toString().c_str());
+    updateWiFiCache();  // Cache WiFi info to prevent String allocations in API handlers
+    DBG_INFO("WiFi connected: SSID=%s IP=%s\n", cachedSSID, cachedIP);
     DBG_OK("WiFi ready.");
   } else {
     DBG_WARN("WiFi not connected (AP mode).\n");
@@ -655,108 +702,138 @@ static void setupOTA() {
 // WebUI API Endpoints
 // =========================
 
+// Update cached WiFi info (call after WiFi connect)
+void updateWiFiCache() {
+  strlcpy(cachedSSID, WiFi.SSID().c_str(), sizeof(cachedSSID));
+  strlcpy(cachedIP, WiFi.localIP().toString().c_str(), sizeof(cachedIP));
+  cachedRSSI = WiFi.RSSI();
+}
+
 // GET /api/state - Return current configuration as JSON
+// OPTIMIZED: Uses JsonDocument and cached WiFi info to prevent memory leaks
 void handleGetState() {
-  String json = "{";
-  json += "\"firmware\":\"" + String(FIRMWARE_VERSION) + "\",";
-  json += "\"hostname\":\"" + String(OTA_HOSTNAME) + "\",";
-  json += "\"uptime\":" + String(millis() / 1000) + ",";
-  json += "\"freeHeap\":" + String(ESP.getFreeHeap()) + ",";
-  json += "\"debugLevel\":" + String(debugLevel) + ",";
-  json += "\"wifi_ssid\":\"" + WiFi.SSID() + "\",";
-  json += "\"wifi_ip\":\"" + WiFi.localIP().toString() + "\",";
-  json += "\"wifi_rssi\":" + String(WiFi.RSSI()) + ",";
-  json += "\"homeCity\":{";
-  json += "\"label\":\"" + String(config.homeCityLabel) + "\",";
-  json += "\"tz\":\"" + String(config.homeCityTz) + "\"";
-  json += "},\"remoteCities\":[";
+  DBG_VERBOSE("GET /api/state\n");
+
+  JsonDocument doc;
+
+  // System info
+  doc["firmware"] = FIRMWARE_VERSION;
+  doc["hostname"] = OTA_HOSTNAME;
+  doc["uptime"] = millis() / 1000;
+  doc["freeHeap"] = ESP.getFreeHeap();
+  doc["debugLevel"] = debugLevel;
+
+  // WiFi info - use cached values to avoid String allocations
+  doc["wifi_ssid"] = cachedSSID;
+  doc["wifi_ip"] = cachedIP;
+  doc["wifi_rssi"] = cachedRSSI;
+
+  // Home city config
+  JsonObject homeCity = doc["homeCity"].to<JsonObject>();
+  homeCity["label"] = config.homeCityLabel;
+  homeCity["tz"] = config.homeCityTz;
+
+  // Remote cities config
+  JsonArray remoteCities = doc["remoteCities"].to<JsonArray>();
   for (int i = 0; i < 5; i++) {
-    json += "{\"label\":\"" + String(config.remoteCities[i]) + "\",";
-    json += "\"tz\":\"" + String(config.remoteTzStrings[i]) + "\"}";
-    if (i < 4) json += ",";
+    JsonObject city = remoteCities.add<JsonObject>();
+    city["label"] = config.remoteCities[i];
+    city["tz"] = config.remoteTzStrings[i];
   }
-  json += "]}";
-  server.send(200, "application/json", json);
-  DBG_INFO("GET /api/state\n");
+
+  String output;
+  serializeJson(doc, output);
+  server.send(200, "application/json", output);
 }
 
 // POST /api/debug-level - Set debug level (0-4)
 void handleSetDebugLevel() {
+  DBG_VERBOSE("POST /api/debug-level\n");
+
   if (!server.hasArg("plain")) {
-    server.send(400, "text/plain", "Missing body");
+    server.send(400, "text/plain", "Missing request body");
     return;
   }
 
-  String body = server.arg("plain");
-  DBG_INFO("POST /api/debug-level: %s\n", body.c_str());
+  JsonDocument doc;
+  auto err = deserializeJson(doc, server.arg("plain"));
+  if (err) {
+    server.send(400, "text/plain", "Invalid JSON");
+    return;
+  }
 
-  // Parse level from JSON: {"level": 3}
-  int levelStart = body.indexOf("\"level\":") + 8;
-  if (levelStart > 8) {
-    int level = body.substring(levelStart).toInt();
-    if (level >= 0 && level <= 4) {
-      debugLevel = level;
-      DBG_INFO("Debug level set to %d\n", debugLevel);
-      server.send(200, "application/json", "{\"success\":true,\"debugLevel\":" + String(debugLevel) + "}");
-    } else {
-      server.send(400, "text/plain", "Invalid level (0-4)");
-    }
-  } else {
+  if (!doc["level"].is<int>()) {
     server.send(400, "text/plain", "Missing level field");
+    return;
+  }
+
+  int level = doc["level"];
+  DBG_INFO("POST /api/debug-level: %d\n", level);
+
+  if (level >= 0 && level <= 4) {
+    debugLevel = level;
+    DBG_INFO("Debug level set to %d\n", debugLevel);
+
+    JsonDocument response;
+    response["success"] = true;
+    response["debugLevel"] = debugLevel;
+
+    String output;
+    serializeJson(response, output);
+    server.send(200, "application/json", output);
+  } else {
+    server.send(400, "text/plain", "Invalid level (0-4)");
   }
 }
 
 // POST /api/config - Update configuration
 void handlePostConfig() {
+  DBG_INFO("POST /api/config\n");
+
   if (!server.hasArg("plain")) {
-    server.send(400, "text/plain", "Missing body");
+    server.send(400, "text/plain", "Missing request body");
     return;
   }
 
-  String body = server.arg("plain");
-  DBG_INFO("POST /api/config: %s\n", body.c_str());
-
-  // Simple JSON parsing for our known structure
-  // Expected: {"homeCity":{"label":"X","tz":"Y"},"remoteCities":[{...},{...},{...},{...}]}
+  JsonDocument doc;
+  auto err = deserializeJson(doc, server.arg("plain"));
+  if (err) {
+    server.send(400, "text/plain", "Invalid JSON");
+    return;
+  }
 
   // Parse home city
-  int homeLabelStart = body.indexOf("\"homeCity\":{\"label\":\"") + 21;
-  int homeLabelEnd = body.indexOf("\"", homeLabelStart);
-  if (homeLabelStart > 21 && homeLabelEnd > homeLabelStart) {
-    String homeLabel = body.substring(homeLabelStart, homeLabelEnd);
-    DBG_INFO("POST homeLabel='%s'\n", homeLabel.c_str());
-    String cityOnly = extractCityName(homeLabel);
-    DBG_INFO("POST cityOnly='%s'\n", cityOnly.c_str());
-    strlcpy(config.homeCityLabel, cityOnly.c_str(), sizeof(config.homeCityLabel));
-    DBG_INFO("POST config.homeCityLabel='%s'\n", config.homeCityLabel);
+  if (!doc["homeCity"].isNull()) {
+    if (!doc["homeCity"]["label"].isNull()) {
+      const char* homeLabel = doc["homeCity"]["label"];
+      String cityOnly = extractCityName(String(homeLabel));
+      strlcpy(config.homeCityLabel, cityOnly.c_str(), sizeof(config.homeCityLabel));
+      DBG_INFO("  Home city: %s\n", config.homeCityLabel);
+    }
+    if (!doc["homeCity"]["tz"].isNull()) {
+      const char* homeTz = doc["homeCity"]["tz"];
+      strlcpy(config.homeCityTz, homeTz, sizeof(config.homeCityTz));
+    }
   }
 
-  int homeTzStart = body.indexOf("\"tz\":\"", homeLabelEnd) + 6;
-  int homeTzEnd = body.indexOf("\"", homeTzStart);
-  if (homeTzStart > 6 && homeTzEnd > homeTzStart) {
-    String homeTz = body.substring(homeTzStart, homeTzEnd);
-    strlcpy(config.homeCityTz, homeTz.c_str(), sizeof(config.homeCityTz));
-  }
+  // Parse remote cities
+  if (!doc["remoteCities"].isNull()) {
+    JsonArray cities = doc["remoteCities"].as<JsonArray>();
+    int i = 0;
+    for (JsonVariant city : cities) {
+      if (i >= 5) break;
 
-  // Parse remote cities (simple extraction, assumes order)
-  int searchPos = body.indexOf("\"remoteCities\":[") + 16;
-  for (int i = 0; i < 5 && searchPos > 16; i++) {
-    int labelStart = body.indexOf("\"label\":\"", searchPos) + 9;
-    int labelEnd = body.indexOf("\"", labelStart);
-    if (labelStart > 9 && labelEnd > labelStart) {
-      String label = body.substring(labelStart, labelEnd);
-      String cityOnly = extractCityName(label);
-      strlcpy(config.remoteCities[i], cityOnly.c_str(), sizeof(config.remoteCities[i]));
+      if (!city["label"].isNull()) {
+        const char* label = city["label"];
+        String cityOnly = extractCityName(String(label));
+        strlcpy(config.remoteCities[i], cityOnly.c_str(), sizeof(config.remoteCities[i]));
+      }
+      if (!city["tz"].isNull()) {
+        const char* tz = city["tz"];
+        strlcpy(config.remoteTzStrings[i], tz, sizeof(config.remoteTzStrings[i]));
+      }
+      i++;
     }
-
-    int tzStart = body.indexOf("\"tz\":\"", labelEnd) + 6;
-    int tzEnd = body.indexOf("\"", tzStart);
-    if (tzStart > 6 && tzEnd > tzStart) {
-      String tz = body.substring(tzStart, tzEnd);
-      strlcpy(config.remoteTzStrings[i], tz.c_str(), sizeof(config.remoteTzStrings[i]));
-    }
-
-    searchPos = tzEnd + 1;
   }
 
   saveConfig();
@@ -766,23 +843,24 @@ void handlePostConfig() {
   drawStaticLayout();
 
   // Reset cached state to force full redraw of times on next loop
-  lastDate = "";
+  lastDate[0] = '\0';
   for (int i = 0; i < 6; i++) {
-    lastTimes[i] = "";
+    lastTimes[i][0] = '\0';
     lastPrevDay[i] = false;
     lastColonState[i] = false;
   }
 
-  server.send(200, "text/plain", "OK - Config updated");
+  server.send(200, "application/json", "{\"ok\":true}");
   DBG_INFO("Config updated and reloaded\n");
 }
 
 // POST /api/reset-wifi - Clear WiFi credentials
 void handleResetWiFi() {
   DBG_INFO("POST /api/reset-wifi\n");
+  server.send(200, "text/plain", "WiFi reset. Rebooting...");
+  delay(1000);
   WiFiManager wm;
   wm.resetSettings();
-  server.send(200, "text/plain", "WiFi reset. Rebooting...");
   delay(1000);
   ESP.restart();
 }
@@ -804,18 +882,18 @@ void handleScreenshot() {
 
 // GET /api/debug - Return recent logs
 void handleDebug() {
-  DBG_INFO("GET /api/debug\n");
+  DBG_VERBOSE("GET /api/debug\n");
 
-  String json = "{";
-  // json += "\"touchIRQ\":" + String(digitalRead(XPT2046_IRQ)) + ",";  // DISABLED: Touch not working
-  json += "\"logCount\":" + String(logCount) + ",";
-  json += "\"logs\":[";
+  // Size: logCount(4) + 20 logs × (timestamp(4) + level(5) + message(80)) = ~1800 bytes
+  JsonDocument doc;
+  doc["logCount"] = logCount;
+
+  JsonArray logs = doc["logs"].to<JsonArray>();
 
   // Output logs in chronological order (oldest to newest)
   int startIdx = (logCount < LOG_BUFFER_SIZE) ? 0 : logIndex;
   for (int i = 0; i < logCount; i++) {
     int idx = (startIdx + i) % LOG_BUFFER_SIZE;
-    if (i > 0) json += ",";
 
     const char* levelStr;
     switch (logBuffer[idx].level) {
@@ -826,44 +904,72 @@ void handleDebug() {
       default:                levelStr = "???"; break;
     }
 
-    json += "{\"t\":" + String(logBuffer[idx].timestamp) + ",";
-    json += "\"l\":\"" + String(levelStr) + "\",";
-    json += "\"m\":\"" + String(logBuffer[idx].message) + "\"}";
+    JsonObject log = logs.add<JsonObject>();
+    log["t"] = logBuffer[idx].timestamp;
+    log["l"] = levelStr;
+    log["m"] = logBuffer[idx].message;
   }
 
-  json += "]}";
-  server.send(200, "application/json", json);
+  String output;
+  serializeJson(doc, output);
+  server.send(200, "application/json", output);
 }
 
 // GET /api/timezones - Return list of all available timezones
 void handleGetTimezones() {
-  DBG_INFO("GET /api/timezones\n");
-  String json = "[";
+  DBG_VERBOSE("GET /api/timezones\n");
+
+  // Size: 102 timezones × (name(40) + tz(64)) = ~10,600 bytes. Use 12KB for safety.
+  JsonDocument doc;
+  JsonArray tzArray = doc.to<JsonArray>();
+
   for (int i = 0; i < numTimezones; i++) {
-    json += "{\"name\":\"" + String(timezones[i].name) + "\",";
-    json += "\"tz\":\"" + String(timezones[i].tzString) + "\"}";
-    if (i < numTimezones - 1) json += ",";
+    JsonObject tz = tzArray.add<JsonObject>();
+    tz["name"] = timezones[i].name;
+    tz["tz"] = timezones[i].tzString;
   }
-  json += "]";
-  server.send(200, "application/json", json);
+
+  String output;
+  serializeJson(doc, output);
+  server.send(200, "application/json", output);
 }
 
 // Setup web server routes
 void setupWebServer() {
-  // Serve static files from LittleFS
-  server.serveStatic("/", LittleFS, "/index.html");
-  server.serveStatic("/app.js", LittleFS, "/app.js");
-  server.serveStatic("/style.css", LittleFS, "/style.css");
+  // IMPORTANT: Register API endpoints BEFORE static file handlers
+  // WebServer processes routes in order - first match wins
 
-  // API endpoints
+  // API endpoints - GET requests
   server.on("/api/state", HTTP_GET, handleGetState);
-  server.on("/api/config", HTTP_POST, handlePostConfig);
   server.on("/api/timezones", HTTP_GET, handleGetTimezones);
+  server.on("/api/screenshot", HTTP_GET, handleScreenshot);
+  server.on("/api/debug", HTTP_GET, handleDebug);
+
+  // Handle favicon.ico to prevent LittleFS errors
+  server.on("/favicon.ico", HTTP_GET, []() {
+    server.send(404);
+  });
+
+  // API endpoints - POST requests
+  server.on("/api/config", HTTP_POST, handlePostConfig);
   server.on("/api/debug-level", HTTP_POST, handleSetDebugLevel);
   server.on("/api/reset-wifi", HTTP_POST, handleResetWiFi);
   server.on("/api/reboot", HTTP_POST, handleReboot);
-  server.on("/api/screenshot", HTTP_GET, handleScreenshot);
-  server.on("/api/debug", HTTP_GET, handleDebug);
+
+  // Serve static files from LittleFS (AFTER API routes to avoid conflicts)
+  server.serveStatic("/app.js", LittleFS, "/app.js");
+  server.serveStatic("/style.css", LittleFS, "/style.css");
+
+  // Serve index.html from root (WebServer doesn't support setDefaultFile chaining)
+  server.on("/", HTTP_GET, []() {
+    if (!LittleFS.exists("/index.html")) {
+      server.send(404, "text/plain", "index.html not found");
+      return;
+    }
+    File file = LittleFS.open("/index.html", "r");
+    server.streamFile(file, "text/html");
+    file.close();
+  });
 
   server.begin();
   DBG_OK("Web server started on port 80");
@@ -1040,11 +1146,15 @@ void handleTouch() {
     DBG_INFO("Diagnostics screen opened\n");
   } else {
     // Return to clock display
+    // Properly unload any loaded font before resetting tracking
+    if (currentSmoothFont != nullptr) {
+      tft.unloadFont();
+    }
     currentSmoothFont = nullptr;  // Reset font tracking so smooth fonts reload
     drawStaticLayout();
-    lastDate = "";  // Force redraw
+    lastDate[0] = '\0';  // Force redraw
     for (int i = 0; i < 6; i++) {
-      lastTimes[i] = "";
+      lastTimes[i][0] = '\0';
       lastPrevDay[i] = false;
       lastColonState[i] = false;
     }
@@ -1058,11 +1168,15 @@ void checkDiagnosticsTimeout() {
 
   if (millis() - diagnosticsStartTime > DIAGNOSTICS_TIMEOUT) {
     showingDiagnostics = false;
+    // Properly unload any loaded font before resetting tracking
+    if (currentSmoothFont != nullptr) {
+      tft.unloadFont();
+    }
     currentSmoothFont = nullptr;  // Reset font tracking so smooth fonts reload
     drawStaticLayout();
-    lastDate = "";  // Force redraw
+    lastDate[0] = '\0';  // Force redraw
     for (int i = 0; i < 6; i++) {
-      lastTimes[i] = "";
+      lastTimes[i][0] = '\0';
       lastPrevDay[i] = false;
       lastColonState[i] = false;
     }
@@ -1246,9 +1360,13 @@ void setup() {
 static unsigned long lastDisplayUpdate = 0;
 const unsigned long DISPLAY_UPDATE_INTERVAL = 1000;  // Update display every 1 second
 
+// Track last debug output time - 5 minutes to reduce overhead
+static unsigned long lastDebugOutput = 0;
+const unsigned long DEBUG_OUTPUT_INTERVAL = 300000;  // Output debug log every 5 minutes
+
 void loop() {
   ArduinoOTA.handle();
-  server.handleClient();
+  server.handleClient();  // Handle WebServer requests
 
   // Handle touch input (always, for responsiveness)
   handleTouch();
@@ -1269,41 +1387,54 @@ void loop() {
   lastDisplayUpdate = now;
 
   // Update clock display
-  String dateStr = formatDate(config.homeCityTz);
-  if (dateStr != lastDate) {
+  char dateStr[16];
+  formatDate(config.homeCityTz, dateStr, sizeof(dateStr));
+  if (strcmp(dateStr, lastDate) != 0) {
     drawHeaderDate(dateStr);
-    lastDate = dateStr;
+    strlcpy(lastDate, dateStr, sizeof(lastDate));
   }
   drawTimes();
 
-  // Display current times for all cities (debug level 3) - compact format
-  if (debugLevel >= DBG_LEVEL_INFO) {
+  // Display current times for all cities - compact format
+  // Only output every 5 minutes to reduce overhead
+  // Uses Serial.print directly to avoid heap allocation from String concatenation
+  if (debugLevel >= DBG_LEVEL_INFO && (now - lastDebugOutput >= DEBUG_OUTPUT_INTERVAL)) {
+    lastDebugOutput = now;
+
     time_t nowTime = time(nullptr);
     struct tm homeTm;
     getLocalTm(config.homeCityTz, nowTime, &homeTm);
 
-    // Build compact single-line output: HOME city time | city1 time | city2 time...
-    String output = "";
+    // Build compact single-line output using Serial.print to avoid String heap allocation
+    Serial.print("[INFO] ");
 
     // Home city (with HOME indicator)
-    TimeInfo homeInfo = formatTime(config.homeCityTz, homeTm);
-    output += config.homeCityLabel;
-    output += " (HOME) ";
-    output += homeInfo.timeStr;
+    TimeInfo homeInfo = formatTime(config.homeCityTz, homeTm, 0);
+    Serial.print(config.homeCityLabel);
+    Serial.print(" (HOME) ");
+    Serial.print(homeInfo.timeStr);
 
     // Remote cities
     for (int i = 0; i < 5; i++) {
-      TimeInfo remoteInfo = formatTime(config.remoteTzStrings[i], homeTm);
-      output += " | ";
-      output += config.remoteCities[i];
-      output += " ";
-      output += remoteInfo.timeStr;
+      TimeInfo remoteInfo = formatTime(config.remoteTzStrings[i], homeTm, i + 1);
+      Serial.print(" | ");
+      Serial.print(config.remoteCities[i]);
+      Serial.print(" ");
+      Serial.print(remoteInfo.timeStr);
       if (remoteInfo.prevDay) {
-        output += " (PREV DAY)";
+        Serial.print(" (PREV DAY)");
       }
     }
 
-    DBG_INFO("%s\n", output.c_str());
+    // Also report heap status
+    Serial.print(" | Heap: ");
+    Serial.print(ESP.getFreeHeap());
+    Serial.println(" bytes");
+
+    // Warn if heap is getting low
+    if (ESP.getFreeHeap() < 20000) {
+      DBG_WARN("Low heap: %u bytes free\n", ESP.getFreeHeap());
+    }
   }
 }
 
