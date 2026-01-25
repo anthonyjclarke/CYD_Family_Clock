@@ -3,8 +3,6 @@
 // Global timezone list
 let timezones = [];
 
-// Display mirror feature removed to reduce API polling load
-
 // Load state on page load
 document.addEventListener('DOMContentLoaded', () => {
   loadTimezones();
@@ -33,10 +31,11 @@ document.addEventListener('DOMContentLoaded', () => {
 async function tick() {
   try {
     await loadState();
+    await updateMirror();
   } catch (e) {
     console.warn('Polling error:', e);
   } finally {
-    setTimeout(tick, 5000);  // Poll every 5 seconds (reduces memory leak rate)
+    setTimeout(tick, 2000);  // Poll every 2 seconds for responsive display mirror
   }
 }
 
@@ -343,7 +342,7 @@ async function handleResetWiFi() {
 
     // Disable UI while device reboots
     setTimeout(() => {
-      document.body.innerHTML = '<div style="text-align:center; padding:50px;"><h1>Device Rebooting...</h1><p>Reconnect to the AP "CYD-WorldClock-Setup" to reconfigure WiFi.</p></div>';
+      document.body.innerHTML = '<div style="text-align:center; padding:50px;"><h1>Device Rebooting...</h1><p>Reconnect to the AP "WorldClock-Setup" to reconfigure WiFi.</p></div>';
     }, 2000);
   } catch (error) {
     console.error('Error resetting WiFi:', error);
@@ -432,4 +431,71 @@ function showNotification(message, type) {
   setTimeout(() => {
     notification.remove();
   }, 5000);
+}
+
+// ====================================
+// Live Clock Display Functions
+// ====================================
+
+// Fetch clock data from ESP32
+async function fetchClock() {
+  try {
+    const response = await fetch('/api/mirror', { cache: 'no-store' });
+    return await response.json();
+  } catch (e) {
+    console.warn('Clock fetch error:', e);
+    return null;
+  }
+}
+
+// Render clock display
+function renderClock(data) {
+  if (!data) return;
+
+  // Update date
+  document.getElementById('clockDate').textContent = data.date || '--';
+
+  // Update home city
+  document.getElementById('homeCity').textContent = data.home?.label || '--';
+  document.getElementById('homeTime').textContent = data.home?.time || '--:--';
+
+  // Update remote cities
+  const remoteContainer = document.getElementById('clockRemote');
+  remoteContainer.innerHTML = '';
+
+  if (data.remote && data.remote.length > 0) {
+    data.remote.forEach(city => {
+      const cityDiv = document.createElement('div');
+      cityDiv.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #222;';
+
+      const labelDiv = document.createElement('div');
+
+      const cityLabel = document.createElement('span');
+      cityLabel.textContent = city.label || '--';
+      cityLabel.style.cssText = 'color: #fff; font-size: 2rem; font-weight: bold;';
+      labelDiv.appendChild(cityLabel);
+
+      // Add "PREV DAY" indicator if needed
+      if (city.prevDay) {
+        const prevDayLabel = document.createElement('div');
+        prevDayLabel.textContent = 'Prev Day';
+        prevDayLabel.style.cssText = 'color: #ff0; font-size: 1rem; margin-top: -2px; line-height: 1;';
+        labelDiv.appendChild(prevDayLabel);
+      }
+
+      const timeSpan = document.createElement('span');
+      timeSpan.textContent = city.time || '--:--';
+      timeSpan.style.cssText = 'color: #0f0; font-size: 2.6rem; font-weight: bold; letter-spacing: 2px;';
+
+      cityDiv.appendChild(labelDiv);
+      cityDiv.appendChild(timeSpan);
+      remoteContainer.appendChild(cityDiv);
+    });
+  }
+}
+
+// Update clock display
+async function updateMirror() {
+  const data = await fetchClock();
+  renderClock(data);
 }

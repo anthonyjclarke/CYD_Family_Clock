@@ -141,8 +141,8 @@ bool showingDiagnostics = false;
 unsigned long diagnosticsStartTime = 0;
 const unsigned long DIAGNOSTICS_TIMEOUT = 15000; // 15 seconds
 
-#define FIRMWARE_VERSION "2.2.0"
-#define OTA_HOSTNAME "CYD-WorldClock"
+#define FIRMWARE_VERSION "2.3.1"
+#define OTA_HOSTNAME "WorldClock"
 #define OTA_PASSWORD "change-me"  // TODO: Change this!
 
 // Configuration structure
@@ -154,6 +154,243 @@ struct Config {
 };
 
 Config config;
+
+// =========================
+// Manual Timezone Calculation (replaces setenv() to fix memory leak)
+// =========================
+// POSIX TZ format: STD offset [DST [offset], start [/time], end [/time]]
+// Example: "AEST-10AEDT,M10.1.0/2,M4.1.0/3"
+// Note: POSIX sign is inverted - negative offset means AHEAD of UTC
+
+struct DstRule {
+  uint8_t month;    // 1-12
+  uint8_t week;     // 1-5 (5 = last)
+  uint8_t dow;      // 0-6 (0 = Sunday)
+  uint8_t hour;     // Transition hour (default 2)
+};
+
+struct ParsedTimezone {
+  int16_t stdOffsetMins;   // Standard time offset in minutes from UTC
+  int16_t dstOffsetMins;   // DST offset in minutes from UTC (0 if no DST)
+  bool hasDst;
+  DstRule dstStart;        // When DST begins
+  DstRule dstEnd;          // When DST ends
+};
+
+// Parsed timezone cache for all 6 cities
+static ParsedTimezone parsedTz[6];
+
+// Parse hours:minutes offset string, returns minutes
+// Handles formats: "10", "-5", "5:30", "-9:30"
+static int16_t parseOffset(const char* str, const char** endPtr) {
+  int sign = 1;
+  if (*str == '-') {
+    sign = -1;
+    str++;
+  } else if (*str == '+') {
+    str++;
+  }
+
+  int hours = 0;
+  while (*str >= '0' && *str <= '9') {
+    hours = hours * 10 + (*str - '0');
+    str++;
+  }
+
+  int mins = 0;
+  if (*str == ':') {
+    str++;
+    while (*str >= '0' && *str <= '9') {
+      mins = mins * 10 + (*str - '0');
+      str++;
+    }
+  }
+
+  if (endPtr) *endPtr = str;
+  // POSIX sign is inverted: -10 means UTC+10, so we negate
+  return -sign * (hours * 60 + mins);
+}
+
+// Parse DST rule in M.w.d/h format
+// M = month (1-12), w = week (1-5), d = day (0-6), h = hour
+static bool parseDstRule(const char* str, DstRule* rule, const char** endPtr) {
+  if (*str != 'M') return false;
+  str++;
+
+  rule->month = 0;
+  while (*str >= '0' && *str <= '9') {
+    rule->month = rule->month * 10 + (*str - '0');
+    str++;
+  }
+  if (*str != '.') return false;
+  str++;
+
+  rule->week = *str - '0';
+  str++;
+  if (*str != '.') return false;
+  str++;
+
+  rule->dow = *str - '0';
+  str++;
+
+  // Optional hour (default 2:00)
+  rule->hour = 2;
+  if (*str == '/') {
+    str++;
+    rule->hour = 0;
+    while (*str >= '0' && *str <= '9') {
+      rule->hour = rule->hour * 10 + (*str - '0');
+      str++;
+    }
+  }
+
+  if (endPtr) *endPtr = str;
+  return true;
+}
+
+// Parse full POSIX TZ string
+void parseTimezoneString(const char* tzStr, ParsedTimezone* tz) {
+  memset(tz, 0, sizeof(ParsedTimezone));
+
+  const char* p = tzStr;
+
+  // Skip STD name (alphabetic characters)
+  while (*p && ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z'))) p++;
+
+  // Parse STD offset
+  tz->stdOffsetMins = parseOffset(p, &p);
+
+  // Check for DST
+  if (!*p || *p == '\0') {
+    tz->hasDst = false;
+    tz->dstOffsetMins = tz->stdOffsetMins;
+    return;
+  }
+
+  // Skip DST name
+  while (*p && ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z'))) p++;
+
+  // DST offset (optional - defaults to STD + 60 mins)
+  tz->hasDst = true;
+  if (*p == ',' || *p == '\0') {
+    tz->dstOffsetMins = tz->stdOffsetMins + 60;
+  } else {
+    tz->dstOffsetMins = parseOffset(p, &p);
+  }
+
+  // Parse DST start rule
+  if (*p == ',') {
+    p++;
+    parseDstRule(p, &tz->dstStart, &p);
+  }
+
+  // Parse DST end rule
+  if (*p == ',') {
+    p++;
+    parseDstRule(p, &tz->dstEnd, &p);
+  }
+}
+
+// Calculate day of week for a given date (0 = Sunday)
+// Using Zeller-like formula
+static int dayOfWeek(int year, int month, int day) {
+  if (month < 3) {
+    month += 12;
+    year--;
+  }
+  int k = year % 100;
+  int j = year / 100;
+  int dow = (day + (13 * (month + 1)) / 5 + k + k / 4 + j / 4 - 2 * j) % 7;
+  // Adjust to 0=Sunday
+  dow = (dow + 6) % 7;
+  return dow;
+}
+
+// Get day of month for DST transition
+// rule: M.w.d where w=1-4 means "nth occurrence", w=5 means "last"
+static int getDstTransitionDay(int year, const DstRule* rule) {
+  int month = rule->month;
+  int targetDow = rule->dow;
+  int week = rule->week;
+
+  if (week == 5) {
+    // Last occurrence: start from end of month
+    int daysInMonth[] = {0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    // Leap year check
+    if (month == 2 && ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0)) {
+      daysInMonth[2] = 29;
+    }
+    int lastDay = daysInMonth[month];
+    int lastDow = dayOfWeek(year, month, lastDay);
+    int diff = lastDow - targetDow;
+    if (diff < 0) diff += 7;
+    return lastDay - diff;
+  } else {
+    // Nth occurrence: find first occurrence then add weeks
+    int firstDow = dayOfWeek(year, month, 1);
+    int diff = targetDow - firstDow;
+    if (diff < 0) diff += 7;
+    int firstOccurrence = 1 + diff;
+    return firstOccurrence + (week - 1) * 7;
+  }
+}
+
+// Check if DST is active for given UTC time
+static bool isDstActive(time_t utc, const ParsedTimezone* tz) {
+  if (!tz->hasDst) return false;
+
+  // Convert to approximate local time for date calculations
+  // Use standard offset as baseline
+  time_t approxLocal = utc + (tz->stdOffsetMins * 60);
+  struct tm ltm;
+  gmtime_r(&approxLocal, &ltm);
+
+  int year = ltm.tm_year + 1900;
+  int month = ltm.tm_mon + 1;
+  int day = ltm.tm_mday;
+  int hour = ltm.tm_hour;
+
+  // Get transition days for this year
+  int startDay = getDstTransitionDay(year, &tz->dstStart);
+  int endDay = getDstTransitionDay(year, &tz->dstEnd);
+
+  int startMonth = tz->dstStart.month;
+  int endMonth = tz->dstEnd.month;
+  int startHour = tz->dstStart.hour;
+  int endHour = tz->dstEnd.hour;
+
+  // Southern hemisphere: DST spans year boundary (start > end month)
+  bool southernHemisphere = (startMonth > endMonth);
+
+  // Create comparable values: month * 10000 + day * 100 + hour
+  int current = month * 10000 + day * 100 + hour;
+  int start = startMonth * 10000 + startDay * 100 + startHour;
+  int end = endMonth * 10000 + endDay * 100 + endHour;
+
+  if (southernHemisphere) {
+    // DST active from start (e.g., Oct) through end of year, and start of year through end (e.g., Apr)
+    return (current >= start || current < end);
+  } else {
+    // Northern hemisphere: DST active between start and end
+    return (current >= start && current < end);
+  }
+}
+
+// Get local time from UTC without using setenv() - NO MEMORY LEAK
+void getLocalTimeNoSetenv(time_t utc, const ParsedTimezone* tz, struct tm* out) {
+  int16_t offsetMins = isDstActive(utc, tz) ? tz->dstOffsetMins : tz->stdOffsetMins;
+  time_t local = utc + (offsetMins * 60);
+  gmtime_r(&local, out);
+}
+
+// Parse all configured timezones (call after config load)
+void parseAllTimezones() {
+  parseTimezoneString(config.homeCityTz, &parsedTz[0]);
+  for (int i = 0; i < 5; i++) {
+    parseTimezoneString(config.remoteTzStrings[i], &parsedTz[i + 1]);
+  }
+  DBG_INFO("Parsed %d timezones (no setenv)\n", 6);
+}
 
 // Default configuration
 const char *DEFAULT_HOME_LABEL = "SYDNEY";
@@ -176,12 +413,16 @@ const char *DEFAULT_REMOTE_TZS[] = {
 #define PREF_REMOTE_PREFIX "remote"  // remote0Label, remote0Tz, etc.
 
 // Helper: Extract city name only (strip country after comma)
-String extractCityName(const String& fullLabel) {
-  int commaPos = fullLabel.indexOf(',');
-  if (commaPos > 0) {
-    return fullLabel.substring(0, commaPos);
+// FIXED: Operates on char* instead of String to avoid heap allocation
+void extractCityName(const char* fullLabel, char* outBuf, size_t bufSize) {
+  const char* commaPos = strchr(fullLabel, ',');
+  if (commaPos != nullptr && commaPos != fullLabel) {
+    size_t copyLen = (size_t)(commaPos - fullLabel);
+    if (copyLen >= bufSize) copyLen = bufSize - 1;
+    strlcpy(outBuf, fullLabel, copyLen + 1);
+  } else {
+    strlcpy(outBuf, fullLabel, bufSize);
   }
-  return fullLabel;
 }
 
 // Load configuration from NVS
@@ -192,20 +433,26 @@ void loadConfig() {
   String homeLabel = prefs.getString(PREF_HOME_LABEL, DEFAULT_HOME_LABEL);
   String homeTz = prefs.getString(PREF_HOME_TZ, DEFAULT_HOME_TZ);
   DBG_INFO("NVS read homeLabel='%s'\n", homeLabel.c_str());
-  String homeCityOnly = extractCityName(homeLabel);
-  DBG_INFO("After extract: homeCityOnly='%s'\n", homeCityOnly.c_str());
-  strlcpy(config.homeCityLabel, homeCityOnly.c_str(), sizeof(config.homeCityLabel));
+  // FIXED: Use char buffer instead of String to avoid heap allocation
+  char homeCityBuf[32];
+  extractCityName(homeLabel.c_str(), homeCityBuf, sizeof(homeCityBuf));
+  DBG_INFO("After extract: homeCityOnly='%s'\n", homeCityBuf);
+  strlcpy(config.homeCityLabel, homeCityBuf, sizeof(config.homeCityLabel));
   DBG_INFO("After strlcpy: config.homeCityLabel='%s'\n", config.homeCityLabel);
   strlcpy(config.homeCityTz, homeTz.c_str(), sizeof(config.homeCityTz));
 
   // Load 5 remote cities
   for (int i = 0; i < 5; i++) {
-    String labelKey = String(PREF_REMOTE_PREFIX) + i + "Label";
-    String tzKey = String(PREF_REMOTE_PREFIX) + i + "Tz";
-    String label = prefs.getString(labelKey.c_str(), DEFAULT_REMOTE_LABELS[i]);
-    String tz = prefs.getString(tzKey.c_str(), DEFAULT_REMOTE_TZS[i]);
-    String cityOnly = extractCityName(label);
-    strlcpy(config.remoteCities[i], cityOnly.c_str(), sizeof(config.remoteCities[i]));
+    // FIXED: Use char buffer instead of String to avoid heap allocation in loop
+    char labelKey[20];
+    char tzKey[20];
+    snprintf(labelKey, sizeof(labelKey), "%s%dLabel", PREF_REMOTE_PREFIX, i);
+    snprintf(tzKey, sizeof(tzKey), "%s%dTz", PREF_REMOTE_PREFIX, i);
+    String label = prefs.getString(labelKey, DEFAULT_REMOTE_LABELS[i]);
+    String tz = prefs.getString(tzKey, DEFAULT_REMOTE_TZS[i]);
+    char cityBuf[32];
+    extractCityName(label.c_str(), cityBuf, sizeof(cityBuf));
+    strlcpy(config.remoteCities[i], cityBuf, sizeof(config.remoteCities[i]));
     strlcpy(config.remoteTzStrings[i], tz.c_str(), sizeof(config.remoteTzStrings[i]));
   }
 
@@ -262,21 +509,8 @@ unsigned long lastDebugPrint = 0;
 bool smoothFontsReady = false;
 const char *currentSmoothFont = nullptr;
 
-// CRITICAL FIX: setenv("TZ") leaks memory on ESP32 when called repeatedly
-// Solution: Cache the last timezone set to minimize setenv() calls
-static const char* lastSetTimezone = nullptr;
-
-void getLocalTm(const char *tz, time_t now, struct tm *out) {
-  // Only call setenv/tzset if timezone actually changed
-  // Use pointer comparison first (works for string literals), then strcmp for safety
-  if (lastSetTimezone != tz && (lastSetTimezone == nullptr || strcmp(lastSetTimezone, tz) != 0)) {
-    setenv("TZ", tz, 1);
-    tzset();
-    lastSetTimezone = tz;
-  }
-
-  localtime_r(&now, out);
-}
+// NOTE: Old getLocalTm() function removed - it used setenv() which leaks memory
+// Now using getLocalTimeNoSetenv() with manual TZ calculation instead
 
 // Switch between smooth fonts (loaded from SPIFFS) or fallback bitmap fonts.
 // Optimized to avoid heap allocations - uses stack buffer for path construction.
@@ -344,12 +578,13 @@ void logLittleFSContents() {
   }
 }
 
-// Format a date string for the given timezone (e.g., "THU 24 MAR").
+// Format a date string for home city (e.g., "THU 24 MAR").
 // Writes directly to provided buffer to avoid heap allocation.
-void formatDate(const char *tz, char *outBuf, size_t bufSize) {
+// Uses manual TZ calculation - NO setenv() calls, NO memory leak!
+void formatDate(char *outBuf, size_t bufSize) {
   time_t now = time(nullptr);
   struct tm timeinfo;
-  getLocalTm(tz, now, &timeinfo);
+  getLocalTimeNoSetenv(now, &parsedTz[0], &timeinfo);  // Always use home city
   strftime(outBuf, bufSize, "%a %d %b", &timeinfo);
   // Convert to uppercase in place
   for (char *p = outBuf; *p; ++p) {
@@ -363,43 +598,62 @@ struct TimeInfo {
   bool showColon;
 };
 
-// CRITICAL FIX: Cache formatted times to avoid repeated setenv() calls
-// Only recalculate when the minute changes
+// CRITICAL FIX v2: Batch all timezone updates to minimize setenv() calls
+// setenv("TZ") leaks ~30-40 bytes per call on ESP32
+// By batching updates, we reduce from 6 calls/minute to 1 call/minute
 struct CachedTimeInfo {
   struct tm tm;
   char timeStr[8];
   bool prevDay;
-  time_t lastCalculated;
 };
 
 static CachedTimeInfo timeCache[6];  // Cache for all 6 cities (home + 5 remote)
+static time_t lastBatchUpdate = 0;   // Last time we updated ALL cities
 static bool timeCacheInitialized = false;
 
+// Update all city times in a single batch - called once per minute
+// Uses manual TZ calculation - NO setenv() calls, NO memory leak!
+void updateAllCityTimes() {
+  time_t now = time(nullptr);
+
+  // Get home city time first (needed for prevDay comparison)
+  getLocalTimeNoSetenv(now, &parsedTz[0], &timeCache[0].tm);
+  snprintf(timeCache[0].timeStr, sizeof(timeCache[0].timeStr),
+           "%02d:%02d", timeCache[0].tm.tm_hour, timeCache[0].tm.tm_min);
+  timeCache[0].prevDay = false;  // Home is never "previous day" relative to itself
+
+  // Update remote cities
+  for (int i = 0; i < 5; i++) {
+    getLocalTimeNoSetenv(now, &parsedTz[i + 1], &timeCache[i + 1].tm);
+    snprintf(timeCache[i + 1].timeStr, sizeof(timeCache[i + 1].timeStr),
+             "%02d:%02d", timeCache[i + 1].tm.tm_hour, timeCache[i + 1].tm.tm_min);
+
+    // Check if remote city is in previous day relative to home
+    timeCache[i + 1].prevDay = false;
+    if (timeCache[i + 1].tm.tm_year < timeCache[0].tm.tm_year) {
+      timeCache[i + 1].prevDay = true;
+    } else if (timeCache[i + 1].tm.tm_year == timeCache[0].tm.tm_year &&
+               timeCache[i + 1].tm.tm_yday < timeCache[0].tm.tm_yday) {
+      timeCache[i + 1].prevDay = true;
+    }
+  }
+
+  // No setenv() restore needed - we don't use setenv() anymore!
+
+  lastBatchUpdate = now;
+  timeCacheInitialized = true;
+}
+
 // Build time string plus flags used by the renderer.
-// - timeStr is always "HH:MM" so the width stays stable.
-// - showColon toggles each second for blink.
-// - prevDay is based on comparison with home city's date.
-TimeInfo formatTime(const char *tz, const struct tm &homeTm, int cityIndex) {
+// Uses cached values - only updates when minute changes via batch update
+// NO setenv() calls - uses manual TZ calculation
+TimeInfo formatTime(int cityIndex) {
   time_t now = time(nullptr);
   TimeInfo info;
 
-  // Check if we need to recalculate (minute changed or first call for this city)
-  if (timeCache[cityIndex].lastCalculated == 0 || (now / 60) != (timeCache[cityIndex].lastCalculated / 60)) {
-    // Recalculate timezone data (only happens once per minute per city)
-    getLocalTm(tz, now, &timeCache[cityIndex].tm);
-    snprintf(timeCache[cityIndex].timeStr, sizeof(timeCache[cityIndex].timeStr),
-             "%02d:%02d", timeCache[cityIndex].tm.tm_hour, timeCache[cityIndex].tm.tm_min);
-
-    timeCache[cityIndex].prevDay = false;
-    if (timeCache[cityIndex].tm.tm_year < homeTm.tm_year) {
-      timeCache[cityIndex].prevDay = true;
-    } else if (timeCache[cityIndex].tm.tm_year == homeTm.tm_year &&
-               timeCache[cityIndex].tm.tm_yday < homeTm.tm_yday) {
-      timeCache[cityIndex].prevDay = true;
-    }
-
-    timeCache[cityIndex].lastCalculated = now;
-    timeCacheInitialized = true;  // Mark cache as initialized
+  // Check if we need to do a batch update (minute changed or first call)
+  if (lastBatchUpdate == 0 || (now / 60) != (lastBatchUpdate / 60)) {
+    updateAllCityTimes();
   }
 
   // Use cached values
@@ -459,13 +713,10 @@ void drawHeaderDate(const char *dateStr) {
 }
 
 // Draw times for each location and update only when needed.
+// Uses cached time values - NO setenv() calls
 void drawTimes() {
   int rows = 6;  // Home + 5 remote cities
   int rowHeight = (tft.height() - kHeaderHeight) / rows;
-
-  time_t now = time(nullptr);
-  struct tm homeTm;
-  getLocalTm(config.homeCityTz, now, &homeTm);
 
   setFont(kFontTime, kFallbackTime);
   if (timePadWidth == 0) {
@@ -476,12 +727,6 @@ void drawTimes() {
   tft.setTextColor(COLOR_TIME, COLOR_BG);
   tft.setTextDatum(TR_DATUM);
 
-  // Helper to get timezone string by index
-  auto getTzByIndex = [](int i) -> const char* {
-    if (i == 0) return config.homeCityTz;
-    return config.remoteTzStrings[i - 1];
-  };
-
   // Helper to get city label by index
   auto getLabelByIndex = [](int i) -> const char* {
     if (i == 0) return config.homeCityLabel;
@@ -490,7 +735,7 @@ void drawTimes() {
 
   for (int i = 0; i < rows; ++i) {
     tft.setTextPadding(timePadWidth);
-    TimeInfo info = formatTime(getTzByIndex(i), homeTm, i);
+    TimeInfo info = formatTime(i);
     bool timeChanged = (strcmp(info.timeStr, lastTimes[i]) != 0);
     bool prevDayChanged = (info.prevDay != lastPrevDay[i]);
     bool colonChanged = (info.showColon != lastColonState[i]);
@@ -602,7 +847,7 @@ static void displayWiFiSetupInstructions(const char* apName, const char* ipAddre
   setFont("NotoSans-Bold7", 1);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
   tft.setTextDatum(BC_DATUM);
-  tft.drawString("Timeout: 3 minutes", tft.width() / 2, tft.height() - 10);
+  tft.drawString("Portal stays open until configured", tft.width() / 2, tft.height() - 10);
 }
 
 static void configModeCallback(WiFiManager* myWiFiManager) {
@@ -625,17 +870,39 @@ static void startWifi() {
   WiFi.mode(WIFI_STA);
 
   WiFiManager wm;
-  wm.setConfigPortalTimeout(180);
+  // No timeout for config portal - stay open until WiFi is configured
+  // This prevents the portal from closing if user doesn't respond quickly
+  wm.setConfigPortalTimeout(0);
   wm.setConnectTimeout(20);
   wm.setAPCallback(configModeCallback);
 
-  bool ok = wm.autoConnect("CYD-WorldClock-Setup");
+  // Add handlers to WiFiManager's web server to suppress browser auto-request errors
+  wm.setWebServerCallback([&wm]() {
+    // WiFiManager's internal web server
+    wm.server->on("/favicon.ico", [&wm]() {
+      wm.server->send(204);  // No content
+    });
+    wm.server->on("/generate_204", [&wm]() {  // Android captive portal check
+      wm.server->send(204);
+    });
+    wm.server->on("/hotspot-detect.html", [&wm]() {  // iOS captive portal check
+      wm.server->send(204);
+    });
+    wm.server->on("/library/test/success.html", [&wm]() {  // iOS captive portal check
+      wm.server->send(204);
+    });
+    wm.server->on("/connecttest.txt", [&wm]() {  // Windows captive portal check
+      wm.server->send(204);
+    });
+  });
+
+  bool ok = wm.autoConnect("WorldClock-Setup");
   if (!ok) {
     DBG_WARN("WiFiManager autoConnect failed/timeout. Starting fallback AP...\n");
     WiFi.mode(WIFI_AP);
-    WiFi.softAP("CYD-WorldClock-AP");
+    WiFi.softAP("WorldClock-AP");
     // Display fallback AP instructions
-    displayWiFiSetupInstructions("CYD-WorldClock-AP", WiFi.softAPIP().toString().c_str());
+    displayWiFiSetupInstructions("WorldClock-AP", WiFi.softAPIP().toString().c_str());
   }
 
   if (WiFi.isConnected()) {
@@ -806,8 +1073,10 @@ void handlePostConfig() {
   if (!doc["homeCity"].isNull()) {
     if (!doc["homeCity"]["label"].isNull()) {
       const char* homeLabel = doc["homeCity"]["label"];
-      String cityOnly = extractCityName(String(homeLabel));
-      strlcpy(config.homeCityLabel, cityOnly.c_str(), sizeof(config.homeCityLabel));
+      // FIXED: Use char buffer instead of String to avoid allocation
+      char cityBuf[32];
+      extractCityName(homeLabel, cityBuf, sizeof(cityBuf));
+      strlcpy(config.homeCityLabel, cityBuf, sizeof(config.homeCityLabel));
       DBG_INFO("  Home city: %s\n", config.homeCityLabel);
     }
     if (!doc["homeCity"]["tz"].isNull()) {
@@ -825,8 +1094,10 @@ void handlePostConfig() {
 
       if (!city["label"].isNull()) {
         const char* label = city["label"];
-        String cityOnly = extractCityName(String(label));
-        strlcpy(config.remoteCities[i], cityOnly.c_str(), sizeof(config.remoteCities[i]));
+        // FIXED: Use char buffer instead of String to avoid allocation
+        char cityBuf[32];
+        extractCityName(label, cityBuf, sizeof(cityBuf));
+        strlcpy(config.remoteCities[i], cityBuf, sizeof(config.remoteCities[i]));
       }
       if (!city["tz"].isNull()) {
         const char* tz = city["tz"];
@@ -838,6 +1109,7 @@ void handlePostConfig() {
 
   saveConfig();
   loadConfig();  // Reload config immediately - no reboot needed
+  parseAllTimezones();  // Re-parse TZ strings for manual calculation
 
   // Redraw static layout with new city labels
   drawStaticLayout();
@@ -878,6 +1150,43 @@ void handleScreenshot() {
   server.send(200, "text/plain", "Screenshot will be sent via serial. Monitor serial output.");
   delay(500);  // Give web response time to send
   takeScreenshot();
+}
+
+// GET /api/mirror - Return current clock state as JSON
+// Text-only display mirror - FIXED to use JsonDocument instead of String concatenation
+void handleMirror() {
+  DBG_VERBOSE("GET /api/mirror\n");
+
+  JsonDocument doc;
+
+  // Get current time for home city using manual TZ calculation (no setenv leak)
+  time_t now = time(nullptr);
+  struct tm homeTm;
+  getLocalTimeNoSetenv(now, &parsedTz[0], &homeTm);
+
+  // Date from home city
+  char dateStr[32];
+  strftime(dateStr, sizeof(dateStr), "%a %d %b", &homeTm);
+  doc["date"] = dateStr;
+
+  // Home city
+  JsonObject homeCity = doc["home"].to<JsonObject>();
+  homeCity["label"] = config.homeCityLabel;
+  homeCity["time"] = lastTimes[0];
+
+  // Remote cities
+  JsonArray remoteCities = doc["remote"].to<JsonArray>();
+  for (int i = 0; i < 5; i++) {
+    JsonObject city = remoteCities.add<JsonObject>();
+    city["label"] = config.remoteCities[i];
+    city["time"] = lastTimes[i + 1];
+    city["prevDay"] = lastPrevDay[i + 1];
+  }
+
+  String output;
+  serializeJson(doc, output);
+  server.send(200, "application/json", output);
+  DBG_VERBOSE("Mirror sent: %u bytes\n", output.length());
 }
 
 // GET /api/debug - Return recent logs
@@ -943,6 +1252,7 @@ void setupWebServer() {
   server.on("/api/state", HTTP_GET, handleGetState);
   server.on("/api/timezones", HTTP_GET, handleGetTimezones);
   server.on("/api/screenshot", HTTP_GET, handleScreenshot);
+  server.on("/api/mirror", HTTP_GET, handleMirror);
   server.on("/api/debug", HTTP_GET, handleDebug);
 
   // Handle favicon.ico to prevent LittleFS errors
@@ -1293,6 +1603,7 @@ void setup() {
   // Load configuration
   showStartupStep("Loading config...");
   loadConfig();
+  parseAllTimezones();  // Parse TZ strings for manual calculation (no setenv leak)
   DBG_OK("Config loaded");
   showStartupStep("Config OK", TFT_GREEN);
   delay(300);
@@ -1388,7 +1699,7 @@ void loop() {
 
   // Update clock display
   char dateStr[16];
-  formatDate(config.homeCityTz, dateStr, sizeof(dateStr));
+  formatDate(dateStr, sizeof(dateStr));
   if (strcmp(dateStr, lastDate) != 0) {
     drawHeaderDate(dateStr);
     strlcpy(lastDate, dateStr, sizeof(lastDate));
@@ -1398,30 +1709,28 @@ void loop() {
   // Display current times for all cities - compact format
   // Only output every 5 minutes to reduce overhead
   // Uses Serial.print directly to avoid heap allocation from String concatenation
+  // Uses cached time values to avoid setenv() calls
   if (debugLevel >= DBG_LEVEL_INFO && (now - lastDebugOutput >= DEBUG_OUTPUT_INTERVAL)) {
     lastDebugOutput = now;
 
-    time_t nowTime = time(nullptr);
-    struct tm homeTm;
-    getLocalTm(config.homeCityTz, nowTime, &homeTm);
+    // Ensure cache is up to date (uses batch update if minute changed)
+    formatTime(0);
 
     // Build compact single-line output using Serial.print to avoid String heap allocation
     Serial.print("[INFO] ");
 
-    // Home city (with HOME indicator)
-    TimeInfo homeInfo = formatTime(config.homeCityTz, homeTm, 0);
+    // Home city (with HOME indicator) - use cached values directly
     Serial.print(config.homeCityLabel);
     Serial.print(" (HOME) ");
-    Serial.print(homeInfo.timeStr);
+    Serial.print(timeCache[0].timeStr);
 
-    // Remote cities
+    // Remote cities - use cached values directly
     for (int i = 0; i < 5; i++) {
-      TimeInfo remoteInfo = formatTime(config.remoteTzStrings[i], homeTm, i + 1);
       Serial.print(" | ");
       Serial.print(config.remoteCities[i]);
       Serial.print(" ");
-      Serial.print(remoteInfo.timeStr);
-      if (remoteInfo.prevDay) {
+      Serial.print(timeCache[i + 1].timeStr);
+      if (timeCache[i + 1].prevDay) {
         Serial.print(" (PREV DAY)");
       }
     }

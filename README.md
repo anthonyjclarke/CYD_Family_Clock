@@ -4,7 +4,7 @@ With Family all around the Globe I wanted to not have to open Apps on phone, clo
 
 A feature-rich world clock display for the ESP32 CYD (Cheap Yellow Display) featuring a 2.8" ILI9341 TFT screen. Display multiple timezones simultaneously with a beautiful interface, web-based configuration, and OTA updates.
 
-![Version](https://img.shields.io/badge/version-2.1.0-blue)
+![Version](https://img.shields.io/badge/version-2.3.1-blue)
 ![Platform](https://img.shields.io/badge/platform-ESP32-green)
 ![Framework](https://img.shields.io/badge/framework-Arduino-orange)
 
@@ -20,7 +20,7 @@ A feature-rich world clock display for the ESP32 CYD (Cheap Yellow Display) feat
   - "PREV DAY" yellow indicator for cities in previous day
   - Color-coded status messages
 
-### Configuration
+### Web-Based Configuration
 
 - **Web-Based Config**: Configure all cities via browser interface
 - **NVS Storage**: Persistent timezone configuration across reboots
@@ -50,15 +50,15 @@ A feature-rich world clock display for the ESP32 CYD (Cheap Yellow Display) feat
 
 ### Pin Configuration (Display)
 
-| Function | GPIO | Notes |
-|----------|------|-------|
-| TFT_MOSI | 13 | SPI data out |
-| TFT_MISO | 12 | SPI data in |
-| TFT_SCLK | 14 | SPI clock |
-| TFT_CS   | 15 | Chip select |
-| TFT_DC   | 2  | Data/command |
-| TFT_RST  | -1 | Tied to ESP32 RST |
-| TFT_BL   | 21 | Backlight (active HIGH) |
+| Function | GPIO | Notes                |
+|----------|------|----------------------|
+| TFT_MOSI | 13   | SPI data out         |
+| TFT_MISO | 12   | SPI data in          |
+| TFT_SCLK | 14   | SPI clock            |
+| TFT_CS   | 15   | Chip select          |
+| TFT_DC   | 2    | Data/command         |
+| TFT_RST  | -1   | Tied to ESP32 RST    |
+| TFT_BL   | 21   | Backlight (active)   |
 
 ### Pin Configuration (Touch Screen)
 
@@ -110,7 +110,7 @@ A feature-rich world clock display for the ESP32 CYD (Cheap Yellow Display) feat
 
 1. **WiFi Configuration:**
 
-   - On first boot, device creates AP: `CYD-WorldClock-Setup`
+   - On first boot, device creates AP: `WorldClock-Setup`
    - Connect to this AP with your phone/laptop
    - Enter your WiFi credentials in the captive portal
    - Device will connect and display IP address on screen
@@ -152,18 +152,19 @@ The web UI provides:
 
 The clock uses POSIX timezone strings. Common examples:
 
-| City | Timezone String |
-|------|----------------|
-| Sydney | `AEST-10AEDT,M10.1.0/2,M4.1.0/3` |
-| Vancouver | `PST8PDT,M3.2.0/2,M11.1.0/2` |
-| London | `GMT0BST,M3.5.0/1,M10.5.0/2` |
-| New York | `EST5EDT,M3.2.0/2,M11.1.0/2` |
-| Tokyo | `JST-9` |
-| Singapore | `SGT-8` |
-| Dubai | `GST-4` |
-| Paris | `CET-1CEST,M3.5.0,M10.5.0/3` |
+| City      | Timezone String                  |
+|-----------|----------------------------------|
+| Sydney    | `AEST-10AEDT,M10.1.0/2,M4.1.0/3` |
+| Vancouver | `PST8PDT,M3.2.0/2,M11.1.0/2`     |
+| London    | `GMT0BST,M3.5.0/1,M10.5.0/2`     |
+| New York  | `EST5EDT,M3.2.0/2,M11.1.0/2`     |
+| Tokyo     | `JST-9`                          |
+| Singapore | `SGT-8`                          |
+| Dubai     | `GST-4`                          |
+| Paris     | `CET-1CEST,M3.5.0,M10.5.0/3`     |
 
 Format: `STD offset DST,start_rule,end_rule`
+
 - `STD`: Standard time name
 - `offset`: Hours offset from UTC (note: sign is reversed)
 - `DST`: Daylight saving time name
@@ -185,12 +186,12 @@ Edit `src/main.cpp` to customize:
 
 ### OTA Configuration
 
-- **Hostname**: `CYD-WorldClock`
+- **Hostname**: `WorldClock`
 - **Password**: `change-me` (⚠️ **Change this in production!**)
 
 ### Using Arduino IDE
 
-1. Tools → Port → Select network port `CYD-WorldClock at <ip>`
+1. Tools → Port → Select network port `WorldClock at <ip>`
 2. Upload as normal
 
 ### Using PlatformIO
@@ -217,7 +218,7 @@ Baud rate: **115200**
 
 Example output:
 
-```
+```log
 [INFO] CYD World Clock v2.0.0 starting...
 [INFO] ✓ LittleFS mounted
 [INFO] Config loaded: Home=SYDNEY, Remote0=VANCOUVER
@@ -254,7 +255,7 @@ Example output:
 
 ## File Structure
 
-```
+```txt
 CYD_Family_Clock/
 ├── src/
 │   └── main.cpp              # Main application code (~760 lines)
@@ -310,9 +311,10 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 ## Author
 
-**Anthony Clarke**
+Anthony Clarke
+
 - GitHub: [@anthonyjclarke](https://github.com/anthonyjclarke)
 
 ---
 
-**Built with ESP32 • Displayed on ILI9341 • Powered by Arduino**
+Built with ESP32 • Displayed on ILI9341 • Powered by Arduino

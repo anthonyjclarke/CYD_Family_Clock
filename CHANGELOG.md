@@ -5,6 +5,70 @@ All notable changes to the CYD World Clock project will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.1] - 2026-01-26
+
+### Added
+- **Mobile responsive design** for WebUI
+  - Automatic font scaling for mobile devices (screens ≤600px)
+  - Optimized layout for phone and tablet viewing
+  - Reduced font sizes and spacing for smaller screens
+- **WiFiManager auto-request handlers** to suppress browser connectivity check errors
+  - Handles `/favicon.ico`, `/generate_204` (Android), `/hotspot-detect.html` (iOS)
+  - Eliminates `[E][WebServer.cpp:649] _handleRequest(): request handler not found` errors
+
+### Changed
+- **WiFi configuration portal timeout** - Changed from 180 seconds to indefinite
+  - Portal stays open until WiFi is configured
+  - Prevents timeout during slow configuration
+  - Updated on-screen message: "Portal stays open until configured"
+- **WiFi AP naming** - Simplified from "CYD-WorldClock-*" to "WorldClock-*"
+  - Setup AP: `WorldClock-Setup` (was `CYD-WorldClock-Setup`)
+  - Fallback AP: `WorldClock-AP` (was `CYD-WorldClock-AP`)
+  - OTA hostname: `WorldClock` (was `CYD-WorldClock`)
+- **WebUI clock display enhancements**
+  - Increased font sizes for better readability on desktop
+  - City names: 2rem, Times: 2.6rem
+  - Home/PREV DAY labels: 1rem (50% smaller for cleaner look)
+  - Improved spacing and alignment
+  - Reduced vertical spacing between city names and labels
+
+### Fixed
+- WebUI font size consistency across all cities
+- Mobile view now properly scales all elements
+- WiFiManager captive portal browser error messages
+
+## [2.3.0] - 2026-01-24
+
+### Fixed - Complete Memory Leak Elimination
+
+#### Problem
+- v2.2.0 reduced but did not eliminate the setenv() memory leak
+- Device still leaked ~3 bytes/second (~11KB/hour) due to 6 setenv() calls per minute
+- Over extended periods, heap would still degrade
+
+#### Solution - Manual Timezone Calculation
+- **Eliminated ALL setenv() calls** from the main loop
+- Implemented manual POSIX timezone string parsing
+- Parse TZ strings once at config load, not every time calculation
+- Calculate local time using UTC + offset instead of setenv()/localtime_r()
+
+#### New Components
+- `ParsedTimezone` struct stores parsed TZ data (offsets, DST rules)
+- `parseTimezoneString()` parses POSIX TZ format (e.g., "AEST-10AEDT,M10.1.0/2,M4.1.0/3")
+- `isDstActive()` calculates DST transitions using M.w.d rules
+- `getLocalTimeNoSetenv()` converts UTC to local time without setenv()
+- Handles both northern and southern hemisphere DST patterns
+
+#### Results
+- **Zero setenv() calls in main loop = Zero memory leak**
+- Heap completely stable over indefinite runtime
+- Slightly increased flash (+24KB for TZ parser) and RAM (+2.7KB for parsed data)
+- No functional changes to user experience
+
+### Removed
+- `getLocalTm()` function (used setenv internally)
+- `lastSetTimezone` caching variable (no longer needed)
+
 ## [2.2.0] - 2026-01-22
 
 ### Fixed - Critical Memory Leak
@@ -172,7 +236,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Network Features
 
 - **Enhanced WiFi setup** with WiFiManager callbacks
-- **Fallback AP mode** when WiFiManager fails (CYD-WorldClock-AP)
+- **Fallback AP mode** when WiFiManager fails (WorldClock-AP)
 - **OTA support** for wireless firmware updates
 - **On-screen progress bar** during OTA updates
 - **WebServer** with static file serving from LittleFS

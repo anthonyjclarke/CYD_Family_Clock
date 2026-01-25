@@ -29,16 +29,19 @@ pip install pyserial pillow requests
 The script auto-detects ESP32 ports. If detection fails, specify manually:
 
 **macOS:**
+
 ```bash
 python3 capture_screenshot.py /dev/cu.usbserial-0001
 ```
 
 **Linux:**
+
 ```bash
 python3 capture_screenshot.py /dev/ttyUSB0
 ```
 
 **Windows:**
+
 ```bash
 python capture_screenshot.py COM3
 ```
@@ -65,22 +68,26 @@ Screenshot saved as `screenshot.png` (240×320 pixels)
 ## Troubleshooting
 
 ### "No module named 'serial'"
+
 ```bash
 pip install pyserial
 ```
 
 ### "Permission denied" on serial port (Linux/Mac)
+
 ```bash
 sudo chmod 666 /dev/ttyUSB0  # Linux
 sudo chmod 666 /dev/cu.usbserial-0001  # Mac
 ```
 
 ### Screenshot appears corrupted
+
 - Ensure no other serial monitors are open
 - Check baud rate is 115200
 - Try the raw RGB565 format: edit code to call `takeScreenshotRaw()` instead
 
 ### Slow capture
+
 - Normal! Reading 76,800 pixels at 115200 baud takes time
 - Faster serial speeds may not be reliable for this much data
 

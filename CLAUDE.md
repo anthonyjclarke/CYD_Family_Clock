@@ -97,7 +97,7 @@ Remote Cities:
 
 ```cpp
 FIRMWARE_VERSION = "2.0.0"
-OTA_HOSTNAME = "CYD-WorldClock"
+OTA_HOSTNAME = "WorldClock"
 OTA_PASSWORD = "change-me"  // ⚠️ CHANGE IN PRODUCTION
 NTP_SERVER1 = "pool.ntp.org"
 NTP_SERVER2 = "time.nist.gov"
@@ -124,7 +124,7 @@ kFontTime = "NotoSans-Bold10" (fallback: 2)
 kFontNote = "NotoSans-Bold7" (fallback: 1)
 ```
 
-## Current State (v2.2.0)
+## Current State (v2.3.0)
 
 ### Features
 
@@ -329,46 +329,48 @@ Simple globe animation:
 
 ## WiFi Behavior
 
-- **First boot**: Creates AP "CYD-WorldClock-Setup", captive portal
+- **First boot**: Creates AP "WorldClock-Setup", captive portal
 - **Configured**: Auto-connects to saved network
-- **Failed connect**: Fallback AP "CYD-WorldClock-AP"
-- **Timeouts**: 180s portal, 20s connect attempt
+- **Failed connect**: Fallback AP "WorldClock-AP"
+- **Timeouts**: Portal stays open indefinitely, 20s connect attempt
 
-## Critical Fix: Memory Leak (v2.2.0)
+## Critical Fix: Memory Leak (v2.2.0 → v2.3.0)
 
 ### Problem
-Device was experiencing severe memory leak (~186 bytes/second), causing crashes after 12-15 minutes of operation. Heap would drop from 200KB to exhaustion.
+Device was experiencing memory leak, causing eventual crashes. The ESP32's `setenv("TZ", ...)` function leaks ~30-40 bytes per call.
 
-### Root Cause
-The ESP32's `setenv("TZ", ...)` function leaks ~40 bytes per call. The clock was calling `setenv()` **4-6 times per second** while cycling through 6 different timezones to display each city's time.
+### v2.2.0 Partial Fix
+Implemented time caching to reduce `setenv()` calls from ~300/minute to 6/minute. This reduced the leak from -186 bytes/sec to -3 bytes/sec, but still leaked ~11KB/hour.
 
-### Solution
-Implemented **time result caching** in `formatTime()`:
-- Cache formatted time for each city (6 total)
-- Only recalculate when the minute changes
-- Reduced `setenv()` calls from **~300/minute to 6/minute** (98% reduction)
+### v2.3.0 Complete Fix
+**Eliminated setenv() entirely** by implementing manual POSIX timezone parsing:
 
-**Result:** Leak rate reduced from -186 bytes/sec to -3.25 bytes/sec (essentially eliminated). Device now runs indefinitely without crashes.
+- Parse timezone strings once at config load (not every time calculation)
+- Calculate UTC offset and DST transitions manually
+- Use `gmtime_r()` instead of `localtime_r()` with manual offset
+- **Zero setenv() calls in main loop = Zero memory leak**
 
 ### Implementation Details
 ```cpp
-// Cache structure for each city
-struct CachedTimeInfo {
-  struct tm tm;
-  char timeStr[8];
-  bool prevDay;
-  time_t lastCalculated;
+// Parsed timezone structure (replaces setenv)
+struct ParsedTimezone {
+  int16_t stdOffsetMins;   // Standard time offset from UTC
+  int16_t dstOffsetMins;   // DST offset from UTC
+  bool hasDst;
+  DstRule dstStart, dstEnd; // DST transition rules
 };
 
-static CachedTimeInfo timeCache[6];  // Home + 5 remote cities
+static ParsedTimezone parsedTz[6];  // Parsed once at config load
 
-// Only recalculate when minute changes
-if (timeCache[cityIndex].lastCalculated == 0 ||
-    (now / 60) != (timeCache[cityIndex].lastCalculated / 60)) {
-  getLocalTm(tz, now, &timeCache[cityIndex].tm);
-  // ... format and cache results
+// Get local time without setenv - NO MEMORY LEAK
+void getLocalTimeNoSetenv(time_t utc, const ParsedTimezone* tz, struct tm* out) {
+  int16_t offsetMins = isDstActive(utc, tz) ? tz->dstOffsetMins : tz->stdOffsetMins;
+  time_t local = utc + (offsetMins * 60);
+  gmtime_r(&local, out);  // No setenv needed!
 }
 ```
+
+**Result:** Heap completely stable. Device runs indefinitely without memory degradation.
 
 ## Resolved Issues from v1.0.0
 
@@ -380,7 +382,7 @@ if (timeCache[cityIndex].lastCalculated == 0 ||
 - ✅ WiFi reconnect - WiFiManager handles credentials
 - ✅ 6th city support - Added in v2.0.0
 - ✅ Touch screen diagnostics - Added in v2.1.0
-- ✅ Memory leak - Fixed in v2.2.0
+- ✅ Memory leak - Reduced in v2.2.0, **eliminated in v2.3.0**
 
 ## Known Limitations
 
@@ -541,10 +543,11 @@ for (int i = 0; i < 6; i++) {
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed version history.
 
-**Current Version**: 2.2.0 (2026-01-22)
+**Current Version**: 2.3.1 (2026-01-26)
 
-- **CRITICAL FIX**: Eliminated memory leak caused by excessive setenv() calls
-- Implemented time result caching (6 cities, recalculate only when minute changes)
-- Reduced setenv() call rate from 5.5/sec to 0.1/sec (98% reduction)
-- Heap now stable at ~213KB (leak rate: -3.25 bytes/sec, essentially eliminated)
-- Device runs indefinitely without crashes (previously crashed after 12-15 minutes)
+- WiFi configuration portal now stays open indefinitely (no timeout)
+- Simplified AP naming: "WorldClock-Setup" / "WorldClock-AP"
+- Enhanced WebUI with larger fonts and improved spacing
+- Mobile-responsive design for phone/tablet viewing
+- Fixed WiFiManager browser auto-request errors
+- Eliminated memory leak (v2.3.0) - heap stable indefinitely
