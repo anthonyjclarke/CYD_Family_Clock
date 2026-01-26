@@ -475,7 +475,7 @@ function renderClock(data) {
       cityLabel.style.cssText = 'color: #fff; font-size: 2rem; font-weight: bold;';
       labelDiv.appendChild(cityLabel);
 
-      // Add "PREV DAY" indicator if needed
+      // Add "Prev Day" indicator if needed
       if (city.prevDay) {
         const prevDayLabel = document.createElement('div');
         prevDayLabel.textContent = 'Prev Day';

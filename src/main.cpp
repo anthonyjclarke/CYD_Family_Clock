@@ -52,6 +52,19 @@ static uint8_t debugLevel = DEBUG_LEVEL;
 // Forward declaration for log buffer
 void addToLogBuffer(uint8_t level, const char* msg);
 
+// Helper to get current timestamp for debug output (in home timezone)
+String getDebugTimestamp() {
+  time_t now = time(nullptr);
+  struct tm timeinfo;
+  // Use localtime_r to get time in system timezone (set to home city)
+  localtime_r(&now, &timeinfo);
+  char buf[24];
+  snprintf(buf, sizeof(buf), "[%02d-%02d-%02d : %02d:%02d:%02d]",
+           timeinfo.tm_mday, timeinfo.tm_mon + 1, timeinfo.tm_year % 100,
+           timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+  return String(buf);
+}
+
 // Helper to format and add to log buffer
 void logToBuffer(uint8_t level, const char* format, ...) {
   char buffer[80];
@@ -62,12 +75,12 @@ void logToBuffer(uint8_t level, const char* format, ...) {
   addToLogBuffer(level, buffer);
 }
 
-// Conditional debug macros based on debug level - now also log to buffer
+// Conditional debug macros based on debug level - now also log to buffer with timestamps
 // Buffer size matches log buffer entry size (80 bytes) to avoid memory waste
-#define DBG_ERROR(...)   do { if (debugLevel >= DBG_LEVEL_ERROR) { Serial.print("[ERR ] "); Serial.printf(__VA_ARGS__); char buf[80]; snprintf(buf, sizeof(buf), __VA_ARGS__); addToLogBuffer(DBG_LEVEL_ERROR, buf); } } while(0)
-#define DBG_WARN(...)    do { if (debugLevel >= DBG_LEVEL_WARN) { Serial.print("[WARN] "); Serial.printf(__VA_ARGS__); char buf[80]; snprintf(buf, sizeof(buf), __VA_ARGS__); addToLogBuffer(DBG_LEVEL_WARN, buf); } } while(0)
-#define DBG_INFO(...)    do { if (debugLevel >= DBG_LEVEL_INFO) { Serial.print("[INFO] "); Serial.printf(__VA_ARGS__); char buf[80]; snprintf(buf, sizeof(buf), __VA_ARGS__); addToLogBuffer(DBG_LEVEL_INFO, buf); } } while(0)
-#define DBG_VERBOSE(...) do { if (debugLevel >= DBG_LEVEL_VERBOSE) { Serial.print("[VERB] "); Serial.printf(__VA_ARGS__); char buf[80]; snprintf(buf, sizeof(buf), __VA_ARGS__); addToLogBuffer(DBG_LEVEL_VERBOSE, buf); } } while(0)
+#define DBG_ERROR(...)   do { if (debugLevel >= DBG_LEVEL_ERROR) { Serial.print("[ERR ] "); Serial.print(getDebugTimestamp()); Serial.print(" "); Serial.printf(__VA_ARGS__); char buf[80]; snprintf(buf, sizeof(buf), __VA_ARGS__); addToLogBuffer(DBG_LEVEL_ERROR, buf); } } while(0)
+#define DBG_WARN(...)    do { if (debugLevel >= DBG_LEVEL_WARN) { Serial.print("[WARN] "); Serial.print(getDebugTimestamp()); Serial.print(" "); Serial.printf(__VA_ARGS__); char buf[80]; snprintf(buf, sizeof(buf), __VA_ARGS__); addToLogBuffer(DBG_LEVEL_WARN, buf); } } while(0)
+#define DBG_INFO(...)    do { if (debugLevel >= DBG_LEVEL_INFO) { Serial.print("[INFO] "); Serial.print(getDebugTimestamp()); Serial.print(" "); Serial.printf(__VA_ARGS__); char buf[80]; snprintf(buf, sizeof(buf), __VA_ARGS__); addToLogBuffer(DBG_LEVEL_INFO, buf); } } while(0)
+#define DBG_VERBOSE(...) do { if (debugLevel >= DBG_LEVEL_VERBOSE) { Serial.print("[VERB] "); Serial.print(getDebugTimestamp()); Serial.print(" "); Serial.printf(__VA_ARGS__); char buf[80]; snprintf(buf, sizeof(buf), __VA_ARGS__); addToLogBuffer(DBG_LEVEL_VERBOSE, buf); } } while(0)
 
 // Legacy compatibility macros
 #define DBG(...)      DBG_INFO(__VA_ARGS__)
