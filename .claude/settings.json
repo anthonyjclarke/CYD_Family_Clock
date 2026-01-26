@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(~/.platformio/packages/toolchain-xtensa-esp32/bin/xtensa-esp32-elf-addr2line:*)",
+      "Bash(git *)",
+      "Bash(npm *)",
+      "Bash(ls *)",
+      "Read(*)",
+      "Write(*)",
+      "Edit(*)",
+      "Bash(pio run:*)",
+      "Bash(pio device monitor:*)"
+    ]
+  }
+}
