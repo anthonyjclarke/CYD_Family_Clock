@@ -100,6 +100,9 @@ void logToBuffer(uint8_t level, const char* format, ...) {
 #define XPT2046_CLK  25   // T_CLK
 #define XPT2046_CS   33   // T_CS
 
+// LDR (Light Dependent Resistor)
+#define LDR_PIN      34   // Analog input for LDR
+
 // Touch calibration values (from fluid simulation)
 #define TOUCH_MIN_X 200
 #define TOUCH_MAX_X 3700
@@ -154,7 +157,7 @@ bool showingDiagnostics = false;
 unsigned long diagnosticsStartTime = 0;
 const unsigned long DIAGNOSTICS_TIMEOUT = 15000; // 15 seconds
 
-#define FIRMWARE_VERSION "2.3.1"
+#define FIRMWARE_VERSION "2.4.0"
 #define OTA_HOSTNAME "WorldClock"
 #define OTA_PASSWORD "change-me"  // TODO: Change this!
 
@@ -164,6 +167,7 @@ struct Config {
   char homeCityTz[64];
   char remoteCities[5][32];    // City labels (expanded to 5)
   char remoteTzStrings[5][64]; // Timezone strings (expanded to 5)
+  bool landscapeMode;          // Display orientation: true = landscape, false = portrait
 };
 
 Config config;
@@ -424,6 +428,7 @@ const char *DEFAULT_REMOTE_TZS[] = {
 #define PREF_HOME_LABEL "homeLabel"
 #define PREF_HOME_TZ "homeTz"
 #define PREF_REMOTE_PREFIX "remote"  // remote0Label, remote0Tz, etc.
+#define PREF_LANDSCAPE "landscape"   // Display orientation: true = landscape
 
 // Helper: Extract city name only (strip country after comma)
 // FIXED: Operates on char* instead of String to avoid heap allocation
@@ -469,8 +474,12 @@ void loadConfig() {
     strlcpy(config.remoteTzStrings[i], tz.c_str(), sizeof(config.remoteTzStrings[i]));
   }
 
+  // Load display orientation
+  config.landscapeMode = prefs.getBool(PREF_LANDSCAPE, false);  // Default: portrait
+
   prefs.end();
-  DBG_INFO("Config loaded: Home=%s, Remote0=%s\n", config.homeCityLabel, config.remoteCities[0]);
+  DBG_INFO("Config loaded: Home=%s, Remote0=%s, Landscape=%d\n",
+           config.homeCityLabel, config.remoteCities[0], config.landscapeMode);
 }
 
 // Save configuration to NVS
@@ -482,8 +491,18 @@ void saveConfig() {
     prefs.putString((String(PREF_REMOTE_PREFIX) + i + "Label").c_str(), config.remoteCities[i]);
     prefs.putString((String(PREF_REMOTE_PREFIX) + i + "Tz").c_str(), config.remoteTzStrings[i]);
   }
+  prefs.putBool(PREF_LANDSCAPE, config.landscapeMode);
   prefs.end();
   DBG_INFO("Config saved\n");
+}
+
+// Apply display rotation based on config
+void applyRotation() {
+  int rotation = config.landscapeMode ? 1 : 0;
+  tft.setRotation(rotation);
+  touchscreen.setRotation(rotation);
+  DBG_INFO("Display rotation set to %d (%s)\n",
+           rotation, config.landscapeMode ? "landscape" : "portrait");
 }
 
 // Color palette.
@@ -492,12 +511,31 @@ static const uint16_t COLOR_LABEL = TFT_WHITE;
 static const uint16_t COLOR_TIME = TFT_GREEN;
 
 // Layout + font settings (easy to tweak for readability).
+// Portrait mode: 240x320
 const int kTitleHeight = 22;   // "WORLD CLOCK" title row
 const int kDateHeight = 18;    // Date display row
 const int kHeaderHeight = kTitleHeight + kDateHeight;  // Total header = 40px
 const int kPad = 8;
 const int kBacklightPin = 21;
 const bool kUseSmoothFonts = true;
+
+// Landscape mode: 320x240
+const int kLeftPanelWidth = 120;       // Title, date, home city (narrower)
+const int kRightPanelWidth = 200;      // 5 remote cities (wider for times)
+const int kLandscapeRemoteRowHeight = 48;  // 240 / 5 = 48px per remote city
+
+// Analog clock settings (landscape mode left panel)
+const int kClockCenterX = 60;          // Center of left panel (120/2)
+const int kClockCenterY = 95;          // Vertical center for clock
+const int kClockRadius = 50;           // Clock face radius
+const int kHourHandLen = 25;           // Hour hand length
+const int kMinuteHandLen = 35;         // Minute hand length
+const int kSecondHandLen = 40;         // Second hand length
+const uint16_t kClockFaceColor = TFT_DARKGREY;
+const uint16_t kHourMarkerColor = TFT_WHITE;
+const uint16_t kHourHandColor = TFT_WHITE;
+const uint16_t kMinuteHandColor = TFT_WHITE;
+const uint16_t kSecondHandColor = TFT_RED;
 const char *kFontHeader = "NotoSans-Bold9";
 const char *kFontLabel = "NotoSans-Bold10";
 const char *kFontTime = "NotoSans-Bold16";
@@ -521,6 +559,11 @@ int timePadWidth = 0;
 unsigned long lastDebugPrint = 0;
 bool smoothFontsReady = false;
 const char *currentSmoothFont = nullptr;
+
+// Analog clock state (for selective redraw)
+int lastSecond = -1;
+int lastMinute = -1;
+int lastHour = -1;
 
 // NOTE: Old getLocalTm() function removed - it used setenv() which leaks memory
 // Now using getLocalTimeNoSetenv() with manual TZ calculation instead
@@ -557,6 +600,102 @@ void setFont(const char *smoothFontName, int fallbackFont) {
   tft.setTextFont(fallbackFont);
 }
 
+// =========================
+// Analog Clock Drawing (Landscape Mode)
+// =========================
+
+// Draw a clock hand from center to endpoint
+// Uses line drawing - erases by drawing in background color
+void drawClockHand(int cx, int cy, int length, float angleDeg, uint16_t color, int thickness = 1) {
+  // Convert angle to radians (0 = 12 o'clock, clockwise)
+  float angleRad = (angleDeg - 90.0f) * PI / 180.0f;
+  int x2 = cx + (int)(length * cos(angleRad));
+  int y2 = cy + (int)(length * sin(angleRad));
+
+  if (thickness <= 1) {
+    tft.drawLine(cx, cy, x2, y2, color);
+  } else {
+    // Draw thicker hand using multiple parallel lines
+    for (int i = -thickness/2; i <= thickness/2; i++) {
+      int offsetX = (int)(i * sin(angleRad));
+      int offsetY = (int)(-i * cos(angleRad));
+      tft.drawLine(cx + offsetX, cy + offsetY, x2 + offsetX, y2 + offsetY, color);
+    }
+  }
+}
+
+// Draw the static analog clock face (circle + hour markers)
+void drawAnalogClockFace() {
+  // Draw clock face circle
+  tft.drawCircle(kClockCenterX, kClockCenterY, kClockRadius, kClockFaceColor);
+
+  // Draw hour markers (12 positions)
+  for (int i = 0; i < 12; i++) {
+    float angleDeg = i * 30.0f;  // 360/12 = 30 degrees per hour
+    float angleRad = (angleDeg - 90.0f) * PI / 180.0f;
+
+    // Inner and outer positions for marker
+    int outerR = kClockRadius - 3;
+    int innerR = kClockRadius - 8;
+
+    int x1 = kClockCenterX + (int)(innerR * cos(angleRad));
+    int y1 = kClockCenterY + (int)(innerR * sin(angleRad));
+    int x2 = kClockCenterX + (int)(outerR * cos(angleRad));
+    int y2 = kClockCenterY + (int)(outerR * sin(angleRad));
+
+    // Draw marker (thicker at 12, 3, 6, 9)
+    if (i % 3 == 0) {
+      tft.drawLine(x1, y1, x2, y2, kHourMarkerColor);
+      tft.drawLine(x1+1, y1, x2+1, y2, kHourMarkerColor);
+    } else {
+      tft.drawLine(x1, y1, x2, y2, kClockFaceColor);
+    }
+  }
+
+  // Draw center dot
+  tft.fillCircle(kClockCenterX, kClockCenterY, 3, kHourMarkerColor);
+}
+
+// Update analog clock hands (selective redraw for flicker-free animation)
+void updateAnalogClockHands(int hour, int minute, int second) {
+  // Calculate angles
+  // Hour: 30 degrees per hour + 0.5 degrees per minute
+  float hourAngle = (hour % 12) * 30.0f + minute * 0.5f;
+  // Minute: 6 degrees per minute
+  float minuteAngle = minute * 6.0f;
+  // Second: 6 degrees per second
+  float secondAngle = second * 6.0f;
+
+  // Erase old hands if they've changed (draw in background color)
+  // Order matters: erase in reverse order of drawing (second, minute, hour)
+  if (lastSecond >= 0 && lastSecond != second) {
+    float oldSecondAngle = lastSecond * 6.0f;
+    drawClockHand(kClockCenterX, kClockCenterY, kSecondHandLen, oldSecondAngle, COLOR_BG, 1);
+  }
+  if (lastMinute >= 0 && lastMinute != minute) {
+    float oldMinuteAngle = lastMinute * 6.0f;
+    drawClockHand(kClockCenterX, kClockCenterY, kMinuteHandLen, oldMinuteAngle, COLOR_BG, 2);
+    // Also need to erase hour hand since it moves with minutes
+    float oldHourAngle = (lastHour % 12) * 30.0f + lastMinute * 0.5f;
+    drawClockHand(kClockCenterX, kClockCenterY, kHourHandLen, oldHourAngle, COLOR_BG, 3);
+  }
+
+  // Draw new hands (order: hour, minute, second - so second is on top)
+  if (lastMinute != minute || lastHour != hour) {
+    drawClockHand(kClockCenterX, kClockCenterY, kHourHandLen, hourAngle, kHourHandColor, 3);
+    drawClockHand(kClockCenterX, kClockCenterY, kMinuteHandLen, minuteAngle, kMinuteHandColor, 2);
+  }
+  drawClockHand(kClockCenterX, kClockCenterY, kSecondHandLen, secondAngle, kSecondHandColor, 1);
+
+  // Redraw center dot (may have been partially erased)
+  tft.fillCircle(kClockCenterX, kClockCenterY, 3, kHourMarkerColor);
+
+  // Update state
+  lastSecond = second;
+  lastMinute = minute;
+  lastHour = hour;
+}
+
 // Block until NTP has set a valid time (returns false on timeout).
 bool syncTime() {
   configTzTime(config.homeCityTz, "pool.ntp.org", "time.nist.gov");
@@ -571,6 +710,21 @@ bool syncTime() {
     delay(500);
   }
   return false;
+}
+
+// Read LDR (Light Dependent Resistor) value
+// Returns averaged ADC value 0-4095 (12-bit on ESP32)
+// Takes 10 samples and averages to reduce noise
+int readLDR() {
+  uint32_t sum = 0;
+  const int samples = 10;
+
+  for (int i = 0; i < samples; i++) {
+    sum += analogRead(LDR_PIN);
+    delay(1);  // Small delay between samples
+  }
+
+  return sum / samples;
 }
 
 // Optional: list files on LittleFS to confirm fonts are present.
@@ -677,10 +831,8 @@ TimeInfo formatTime(int cityIndex) {
   return info;
 }
 
-// Draw the static header and location labels once.
-void drawStaticLayout() {
-  tft.fillScreen(COLOR_BG);
-
+// Draw static layout for portrait mode (240x320)
+void drawStaticLayoutPortrait() {
   // Draw centered "WORLD CLOCK" title on first row
   tft.setTextColor(COLOR_LABEL, COLOR_BG);
   setFont(kFontHeader, kFallbackHeader);
@@ -715,25 +867,87 @@ void drawStaticLayout() {
   }
 }
 
+// Draw static layout for landscape mode (320x240)
+// Left panel (120px): Title, date, analog clock, city name, HOME, digital time
+// Right panel (200px): 5 remote cities stacked vertically with times
+void drawStaticLayoutLandscape() {
+  // LEFT PANEL: Title (single line, centered)
+  tft.setTextColor(COLOR_LABEL, COLOR_BG);
+  setFont(kFontHeader, kFallbackHeader);
+  tft.setTextDatum(TC_DATUM);
+  tft.drawString("WORLD CLOCK", kLeftPanelWidth / 2, 4);
+
+  // Date will be drawn by drawHeaderDate()
+
+  // Draw analog clock face
+  drawAnalogClockFace();
+
+  // Home city label (centered below clock)
+  int homeCityY = 155;
+  setFont(kFontLabel, kFallbackLabel);
+  tft.setTextDatum(TC_DATUM);
+  tft.setTextColor(COLOR_LABEL, COLOR_BG);
+  tft.drawString(config.homeCityLabel, kLeftPanelWidth / 2, homeCityY);
+
+  // "HOME" indicator below city
+  int homeIndicatorY = 175;
+  setFont(kFontNote, kFallbackNote);
+  tft.setTextColor(TFT_CYAN, COLOR_BG);
+  tft.setTextDatum(TC_DATUM);
+  tft.drawString("HOME", kLeftPanelWidth / 2, homeIndicatorY);
+
+  // Digital time will be drawn by drawTimesLandscape() at Y=195
+
+  // Divider line between left and right panels
+  tft.drawFastVLine(kLeftPanelWidth - 1, 0, tft.height(), TFT_DARKGREY);
+
+  // RIGHT PANEL: 5 Remote Cities (no horizontal lines)
+  setFont(kFontLabel, kFallbackLabel);
+  tft.setTextColor(COLOR_LABEL, COLOR_BG);
+  tft.setTextDatum(TL_DATUM);
+
+  for (int i = 0; i < 5; i++) {
+    int rowY = i * kLandscapeRemoteRowHeight + 2;  // City at top of row
+    tft.drawString(config.remoteCities[i], kLeftPanelWidth + kPad, rowY);
+  }
+}
+
+// Draw the static header and location labels once.
+void drawStaticLayout() {
+  tft.fillScreen(COLOR_BG);
+
+  if (config.landscapeMode) {
+    drawStaticLayoutLandscape();
+  } else {
+    drawStaticLayoutPortrait();
+  }
+}
+
 // Draw or update the header date string.
 void drawHeaderDate(const char *dateStr) {
   setFont(kFontHeader, kFallbackHeader);
   tft.setTextColor(COLOR_TIME, COLOR_BG);
-  tft.setTextDatum(MC_DATUM);
-  // Clear date row (below title) and draw centered date
-  tft.fillRect(0, kTitleHeight, tft.width(), kDateHeight, COLOR_BG);
-  tft.drawString(dateStr, tft.width() / 2, kTitleHeight + kDateHeight / 2 + 2);
+
+  if (config.landscapeMode) {
+    // Landscape: date in left panel, below single-line title
+    tft.setTextDatum(TC_DATUM);
+    tft.fillRect(0, 18, kLeftPanelWidth - 2, 18, COLOR_BG);  // Clear date area
+    tft.drawString(dateStr, kLeftPanelWidth / 2, 20);
+  } else {
+    // Portrait: centered date below title (full width)
+    tft.setTextDatum(MC_DATUM);
+    tft.fillRect(0, kTitleHeight, tft.width(), kDateHeight, COLOR_BG);
+    tft.drawString(dateStr, tft.width() / 2, kTitleHeight + kDateHeight / 2 + 2);
+  }
 }
 
-// Draw times for each location and update only when needed.
-// Uses cached time values - NO setenv() calls
-void drawTimes() {
+// Draw times for portrait mode (240x320)
+void drawTimesPortrait() {
   int rows = 6;  // Home + 5 remote cities
   int rowHeight = (tft.height() - kHeaderHeight) / rows;
 
   setFont(kFontTime, kFallbackTime);
   if (timePadWidth == 0) {
-    // Reserve a fixed width so the time does not "move".
     timePadWidth = tft.textWidth("88:88");
   }
   tft.setTextPadding(timePadWidth);
@@ -758,38 +972,36 @@ void drawTimes() {
 
     int rowTop = kHeaderHeight + i * rowHeight;
     int timeY = rowTop + 2;
-    int widthMin = tft.textWidth("00");
-    int widthColon = tft.textWidth(":");
-    int colonX = (tft.width() - kPad) - widthMin - widthColon;
 
     if (timeChanged || prevDayChanged) {
-      // Clear only the right side where time is displayed, leaving city labels intact
-      // Time is "HH:MM" (5 chars), calculate actual start position
       setFont(kFontTime, kFallbackTime);
-      int timeWidth = tft.textWidth("88:88");  // Max width for time
-      int clearX = (tft.width() - kPad) - timeWidth - 2;  // Start 2px before time begins
+      int timeWidth = tft.textWidth("88:88");
+      int clearX = (tft.width() - kPad) - timeWidth - 2;
       tft.fillRect(clearX, rowTop, tft.width() - clearX, rowHeight, COLOR_BG);
       tft.setTextDatum(TR_DATUM);
       tft.drawString(info.timeStr, tft.width() - kPad, timeY);
     }
 
-    if (colonChanged) {
-      // Only touch the colon region to avoid flicker.
+    if (colonChanged && !timeChanged) {
+      // Colon blink only - clear colon area and redraw
+      setFont(kFontTime, kFallbackTime);
+      int widthMin = tft.textWidth("00");
+      int widthColon = tft.textWidth(":");
+      int colonX = (tft.width() - kPad) - widthMin - widthColon;
+      // Clear colon area
+      tft.fillRect(colonX, timeY, widthColon, tft.fontHeight(), COLOR_BG);
       tft.setTextPadding(0);
       tft.setTextDatum(TL_DATUM);
       if (info.showColon) {
         tft.setTextColor(COLOR_TIME, COLOR_BG);
-      } else {
-        tft.setTextColor(COLOR_BG, COLOR_BG);
+        tft.drawString(":", colonX, timeY);
       }
-      tft.drawString(":", colonX, timeY);
       tft.setTextDatum(TR_DATUM);
       tft.setTextColor(COLOR_TIME, COLOR_BG);
     }
 
     if (prevDayChanged) {
-      // Clear left side for city label and "PREV DAY" note
-      int labelClearWidth = tft.width() / 2 - kPad - 4;  // Extra margin to prevent clipping
+      int labelClearWidth = tft.width() / 2 - kPad - 4;
       tft.fillRect(kPad, rowTop, labelClearWidth, rowHeight, COLOR_BG);
       setFont(kFontLabel, kFallbackLabel);
       tft.setTextColor(COLOR_LABEL, COLOR_BG);
@@ -798,7 +1010,7 @@ void drawTimes() {
       if (info.prevDay) {
         setFont(kFontNote, kFallbackNote);
         tft.setTextColor(TFT_YELLOW, COLOR_BG);
-        tft.drawString("PREV DAY", kPad, rowTop + 2 + tft.fontHeight() + 2);
+        tft.drawString("Prev Day", kPad, rowTop + 2 + tft.fontHeight() + 2);
       }
     }
 
@@ -808,6 +1020,140 @@ void drawTimes() {
     strlcpy(lastTimes[i], info.timeStr, sizeof(lastTimes[i]));
     lastPrevDay[i] = info.prevDay;
     lastColonState[i] = info.showColon;
+  }
+}
+
+// Draw times for landscape mode (320x240)
+// Left panel: Analog clock + digital time below
+// Right panel: Times right-aligned, PREV DAY tiny below city label
+void drawTimesLandscape() {
+  setFont(kFontTime, kFallbackTime);
+  if (timePadWidth == 0) {
+    timePadWidth = tft.textWidth("88:88");
+  }
+
+  // Get home city time for analog clock
+  time_t now = time(nullptr);
+  struct tm homeTm;
+  getLocalTimeNoSetenv(now, &parsedTz[0], &homeTm);
+
+  // Update analog clock hands (every second)
+  updateAnalogClockHands(homeTm.tm_hour, homeTm.tm_min, homeTm.tm_sec);
+
+  // HOME CITY DIGITAL TIME (left panel, below HOME indicator)
+  {
+    TimeInfo info = formatTime(0);
+    bool timeChanged = (strcmp(info.timeStr, lastTimes[0]) != 0);
+    bool colonChanged = (info.showColon != lastColonState[0]);
+
+    if (timeChanged || colonChanged) {
+      int homeTimeY = 195;  // Below HOME indicator (Y=175)
+
+      if (timeChanged) {
+        setFont(kFontTime, kFallbackTime);
+        tft.setTextColor(COLOR_TIME, COLOR_BG);
+        tft.setTextDatum(TC_DATUM);
+        // Clear home time area
+        tft.fillRect(kPad, homeTimeY, kLeftPanelWidth - kPad * 2 - 2, 30, COLOR_BG);
+        tft.drawString(info.timeStr, kLeftPanelWidth / 2, homeTimeY);
+      }
+
+      if (colonChanged && !timeChanged) {
+        // Colon blink only - clear colon area and redraw
+        setFont(kFontTime, kFallbackTime);
+        int widthHour = tft.textWidth("00");
+        int widthColon = tft.textWidth(":");
+        int colonX = kLeftPanelWidth / 2 - tft.textWidth("88:88") / 2 + widthHour;
+        // Clear colon area
+        tft.fillRect(colonX, homeTimeY, widthColon, tft.fontHeight(), COLOR_BG);
+        tft.setTextPadding(0);
+        tft.setTextDatum(TL_DATUM);
+        if (info.showColon) {
+          tft.setTextColor(COLOR_TIME, COLOR_BG);
+          tft.drawString(":", colonX, homeTimeY);
+        }
+        tft.setTextColor(COLOR_TIME, COLOR_BG);
+      }
+
+      strlcpy(lastTimes[0], info.timeStr, sizeof(lastTimes[0]));
+      lastPrevDay[0] = info.prevDay;
+      lastColonState[0] = info.showColon;
+    }
+  }
+
+  // REMOTE CITIES TIMES (right panel - 200px wide)
+  // Layout: City label at top, Time below (right-aligned), PREV DAY at bottom
+  for (int i = 0; i < 5; i++) {
+    int cityIndex = i + 1;
+    TimeInfo info = formatTime(cityIndex);
+    bool timeChanged = (strcmp(info.timeStr, lastTimes[cityIndex]) != 0);
+    bool prevDayChanged = (info.prevDay != lastPrevDay[cityIndex]);
+    bool colonChanged = (info.showColon != lastColonState[cityIndex]);
+
+    if (!timeChanged && !prevDayChanged && !colonChanged) {
+      continue;
+    }
+
+    int rowY = i * kLandscapeRemoteRowHeight;
+    int cityLabelY = rowY + 2;     // City label at top
+    int prevDayY = rowY + 20;      // PREV DAY under city (moved down 3px)
+    int timeY = rowY + 20;         // Time right-aligned
+
+    if (timeChanged || prevDayChanged) {
+      // Clear the entire row area for this city (except divider line)
+      tft.fillRect(kLeftPanelWidth + 1, rowY, kRightPanelWidth - 1, kLandscapeRemoteRowHeight, COLOR_BG);
+
+      // Redraw city label
+      setFont(kFontLabel, kFallbackLabel);
+      tft.setTextColor(COLOR_LABEL, COLOR_BG);
+      tft.setTextDatum(TL_DATUM);
+      tft.drawString(config.remoteCities[i], kLeftPanelWidth + kPad, cityLabelY);
+
+      // Draw PREV DAY indicator (same style as portrait mode)
+      if (info.prevDay) {
+        setFont(kFontNote, kFallbackNote);  // Same smooth font as portrait
+        tft.setTextColor(TFT_YELLOW, COLOR_BG);
+        tft.setTextDatum(TL_DATUM);
+        tft.drawString("PREV DAY", kLeftPanelWidth + kPad, cityLabelY + tft.fontHeight() + 2);
+      }
+
+      // Draw time right-aligned
+      setFont(kFontTime, kFallbackTime);
+      tft.setTextColor(COLOR_TIME, COLOR_BG);
+      tft.setTextDatum(TR_DATUM);
+      tft.drawString(info.timeStr, tft.width() - 6, timeY);
+    }
+
+    if (colonChanged && !timeChanged) {
+      // Colon blink only - clear colon area and redraw
+      setFont(kFontTime, kFallbackTime);
+      int widthMin = tft.textWidth("00");
+      int widthColon = tft.textWidth(":");
+      int colonX = (tft.width() - 6) - widthMin - widthColon;
+      // Clear colon area
+      tft.fillRect(colonX, timeY, widthColon, tft.fontHeight(), COLOR_BG);
+      tft.setTextPadding(0);
+      tft.setTextDatum(TL_DATUM);
+      if (info.showColon) {
+        tft.setTextColor(COLOR_TIME, COLOR_BG);
+        tft.drawString(":", colonX, timeY);
+      }
+      tft.setTextColor(COLOR_TIME, COLOR_BG);
+    }
+
+    strlcpy(lastTimes[cityIndex], info.timeStr, sizeof(lastTimes[cityIndex]));
+    lastPrevDay[cityIndex] = info.prevDay;
+    lastColonState[cityIndex] = info.showColon;
+  }
+}
+
+// Draw times for each location and update only when needed.
+// Uses cached time values - NO setenv() calls
+void drawTimes() {
+  if (config.landscapeMode) {
+    drawTimesLandscape();
+  } else {
+    drawTimesPortrait();
   }
 }
 
@@ -1002,6 +1348,8 @@ void handleGetState() {
   doc["uptime"] = millis() / 1000;
   doc["freeHeap"] = ESP.getFreeHeap();
   doc["debugLevel"] = debugLevel;
+  doc["ldrValue"] = readLDR();
+  doc["landscapeMode"] = config.landscapeMode;
 
   // WiFi info - use cached values to avoid String allocations
   doc["wifi_ssid"] = cachedSSID;
@@ -1120,9 +1468,25 @@ void handlePostConfig() {
     }
   }
 
+  // Parse display orientation
+  bool rotationChanged = false;
+  if (!doc["landscapeMode"].isNull()) {
+    bool newLandscape = doc["landscapeMode"].as<bool>();
+    if (config.landscapeMode != newLandscape) {
+      config.landscapeMode = newLandscape;
+      rotationChanged = true;
+      DBG_INFO("  Display mode: %s\n", newLandscape ? "landscape" : "portrait");
+    }
+  }
+
   saveConfig();
   loadConfig();  // Reload config immediately - no reboot needed
   parseAllTimezones();  // Re-parse TZ strings for manual calculation
+
+  // Apply rotation if changed
+  if (rotationChanged) {
+    applyRotation();
+  }
 
   // Redraw static layout with new city labels
   drawStaticLayout();
@@ -1134,6 +1498,10 @@ void handlePostConfig() {
     lastPrevDay[i] = false;
     lastColonState[i] = false;
   }
+  // Reset analog clock state
+  lastSecond = -1;
+  lastMinute = -1;
+  lastHour = -1;
 
   server.send(200, "application/json", "{\"ok\":true}");
   DBG_INFO("Config updated and reloaded\n");
@@ -1481,6 +1849,10 @@ void handleTouch() {
       lastPrevDay[i] = false;
       lastColonState[i] = false;
     }
+    // Reset analog clock state
+    lastSecond = -1;
+    lastMinute = -1;
+    lastHour = -1;
     DBG_INFO("Diagnostics screen closed\n");
   }
 }
@@ -1503,6 +1875,10 @@ void checkDiagnosticsTimeout() {
       lastPrevDay[i] = false;
       lastColonState[i] = false;
     }
+    // Reset analog clock state
+    lastSecond = -1;
+    lastMinute = -1;
+    lastHour = -1;
     DBG_INFO("Diagnostics auto-closed\n");
   }
 }
@@ -1552,34 +1928,17 @@ void showSplashScreen() {
   tft.fillScreen(TFT_BLACK);
   tft.setTextDatum(MC_DATUM);
 
-  // Phase 1: Title fade-in
+  // Title display
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
   tft.setTextFont(4);
-  for (int alpha = 0; alpha < 5; alpha++) {
-    tft.drawString("CYD WORLD CLOCK", tft.width() / 2, tft.height() / 2 - 30);
-    delay(100);
-  }
-  delay(800);
+  tft.drawString("CYD WORLD CLOCK", tft.width() / 2, tft.height() / 2 - 20);
 
-  // Phase 2: Globe/timezone animation (simple circle with dots)
-  int cx = tft.width() / 2;
-  int cy = tft.height() / 2;
-  int radius = 50;
+  // Version
+  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+  tft.setTextFont(2);
+  tft.drawString("v" FIRMWARE_VERSION, tft.width() / 2, tft.height() / 2 + 20);
 
-  // Draw "globe" outline
-  tft.drawCircle(cx, cy, radius, TFT_GREEN);
-  delay(200);
-
-  // Draw timezone markers around globe
-  for (int i = 0; i < 12; i++) {
-    float angle = (i * 30) * PI / 180.0;
-    int x = cx + radius * cos(angle);
-    int y = cy + radius * sin(angle);
-    tft.fillCircle(x, y, 3, TFT_YELLOW);
-    delay(80);
-  }
-  delay(500);
-
+  delay(1500);
   tft.fillScreen(TFT_BLACK);
 }
 
@@ -1589,6 +1948,12 @@ void setup() {
 
   pinMode(kBacklightPin, OUTPUT);
   digitalWrite(kBacklightPin, HIGH);
+
+  // Initialize LDR (Light Dependent Resistor) on ADC1
+  pinMode(LDR_PIN, INPUT);
+  analogSetAttenuation(ADC_11db);  // 0-3.3V range for full ADC reading
+  delay(100);  // Allow ADC to stabilize
+  DBG_INFO("LDR initialized on pin %d, initial reading: %d\n", LDR_PIN, readLDR());
 
   // Initialize touch screen with separate SPI bus (VSPI)
   // Using pin configuration confirmed working from fluid simulation demo
@@ -1668,7 +2033,11 @@ void setup() {
   }
   delay(300);
 
-  // Splash screen
+  // Apply display rotation based on config (portrait or landscape)
+  // Do this before splash so splash shows in correct orientation
+  applyRotation();
+
+  // Splash screen (now in correct orientation)
   showSplashScreen();
 
   // Draw clock interface
@@ -1748,10 +2117,12 @@ void loop() {
       }
     }
 
-    // Also report heap status
+    // Also report heap and LDR status
     Serial.print(" | Heap: ");
     Serial.print(ESP.getFreeHeap());
-    Serial.println(" bytes");
+    Serial.print(" bytes | LDR: ");
+    Serial.print(readLDR());
+    Serial.println();
 
     // Warn if heap is getting low
     if (ESP.getFreeHeap() < 20000) {

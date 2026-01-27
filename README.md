@@ -4,7 +4,7 @@ With Family all around the Globe I wanted to not have to open Apps on phone, clo
 
 A feature-rich world clock display for the ESP32 CYD (Cheap Yellow Display) featuring a 2.8" ILI9341 TFT screen. Display multiple timezones simultaneously with a beautiful interface, web-based configuration, and OTA updates.
 
-![Version](https://img.shields.io/badge/version-2.3.1-blue)
+![Version](https://img.shields.io/badge/version-2.4.0-blue)
 ![Platform](https://img.shields.io/badge/platform-ESP32-green)
 ![Framework](https://img.shields.io/badge/framework-Arduino-orange)
 
@@ -13,16 +13,22 @@ A feature-rich world clock display for the ESP32 CYD (Cheap Yellow Display) feat
 ### Display
 
 - **6 Timezone Display**: Configurable home city + 5 remote cities
-- **Centered Layout**: Title, date, and city times in clean rows
+- **Dual Display Modes**:
+  - **Portrait (240x320)**: Classic vertical layout with all cities stacked
+  - **Landscape (320x240)**: Analogue clock with home city + 5 remote cities panel
+- **Analogue Clock** (Landscape mode): Real-time clock face with hour, minute, and second hands
 - **Smooth Fonts**: Optional TFT_eSPI smooth fonts from LittleFS
 - **Visual Indicators**:
   - Blinking colon every second
   - "PREV DAY" yellow indicator for cities in previous day
   - Color-coded status messages
+- **LDR Support**: Light sensor for ambient brightness detection
 
 ### Web-Based Configuration
 
 - **Web-Based Config**: Configure all cities via browser interface
+- **Live Clock Mirror**: Real-time display of all city times in the WebUI
+- **Display Mode Toggle**: Switch between portrait and landscape modes
 - **NVS Storage**: Persistent timezone configuration across reboots
 - **WiFiManager**: Easy WiFi setup with captive portal
 - **Default Cities**: Sydney, Vancouver, London, Nairobi, Denver
@@ -69,6 +75,12 @@ A feature-rich world clock display for the ESP32 CYD (Cheap Yellow Display) feat
 | Touch MISO | 39   | T_OUT (board-specific)  |
 | Touch CLK  | 25   | T_CLK                   |
 | Touch CS   | 33   | T_CS                    |
+
+### Pin Configuration (Other)
+
+| Function | GPIO | Notes                    |
+|----------|------|--------------------------|
+| LDR      | 34   | Analog input (0-4095)    |
 
 ## Installation
 
@@ -127,7 +139,9 @@ A feature-rich world clock display for the ESP32 CYD (Cheap Yellow Display) feat
 
 The web UI provides:
 
-- **System Status**: Firmware version, uptime, WiFi info, heap memory
+- **Live Clock Display**: Real-time mirror of all city times (updates every 2 seconds)
+- **System Status**: Firmware version, uptime, WiFi info, heap memory, LDR value
+- **Display Mode**: Toggle between portrait (240x320) and landscape (320x240) modes
 - **Debug Level Control**: Adjust logging verbosity in real-time (Off/Error/Warn/Info/Verbose)
 - **Timezone Configuration**:
   - Home city (reference timezone)
@@ -135,13 +149,14 @@ The web UI provides:
   - 102 predefined cities across 13 regions
   - Custom timezone entry for unlisted cities
 - **System Actions**: Reboot device, reset WiFi credentials
-- **Auto-refresh**: Status updates every 30 seconds
+- **Auto-refresh**: Status updates every 5 seconds
 
 ### API Endpoints
 
 - `GET /api/state` - Returns system status and current configuration (JSON)
+- `GET /api/mirror` - Returns current time display data for all cities (JSON)
 - `GET /api/timezones` - Returns list of 102 predefined timezones (JSON)
-- `POST /api/config` - Update timezone configuration (JSON body)
+- `POST /api/config` - Update timezone configuration and display mode (JSON body)
 - `POST /api/debug-level` - Change debug level at runtime (JSON body)
 - `POST /api/reboot` - Reboot device
 - `POST /api/reset-wifi` - Clear WiFi credentials and reboot
@@ -258,7 +273,7 @@ Example output:
 ```txt
 CYD_Family_Clock/
 ├── src/
-│   └── main.cpp              # Main application code (~760 lines)
+│   └── main.cpp              # Main application code (~2100 lines)
 ├── include/
 │   └── User_Setup.h          # TFT_eSPI hardware configuration
 ├── data/                     # LittleFS files (upload with uploadfs)
@@ -301,7 +316,6 @@ This project is provided as-is for personal use.
 
 ## Credits
 
-- **Architecture inspired by**: [ESP32_Touchdown_Retro_Clock](https://github.com/anthonyjclarke)
 - **TFT_eSPI Library**: Bodmer
 - **WiFiManager**: tzapu
 

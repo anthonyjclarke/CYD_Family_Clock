@@ -14,6 +14,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('rebootBtn').addEventListener('click', handleReboot);
   document.getElementById('resetWifiBtn').addEventListener('click', handleResetWiFi);
   document.getElementById('debugLevel').addEventListener('change', handleDebugLevelChange);
+  document.getElementById('displayMode').addEventListener('change', handleDisplayModeChange);
 
   // Timezone dropdown change listeners
   document.getElementById('homeSelect').addEventListener('change', updateTimezoneFields);
@@ -222,6 +223,8 @@ async function loadState() {
     document.getElementById('wifi_rssi').textContent = (data.wifi_rssi || '--') + ' dBm';
     document.getElementById('uptime').textContent = formatUptime(data.uptime || 0);
     document.getElementById('freeHeap').textContent = formatBytes(data.freeHeap || 0);
+    document.getElementById('ldrValue').textContent = data.ldrValue !== undefined ? data.ldrValue : '--';
+    document.getElementById('displayMode').value = data.landscapeMode ? 'landscape' : 'portrait';
     document.getElementById('debugLevel').value = data.debugLevel || 3;
 
     // Update form fields
@@ -371,6 +374,30 @@ async function handleDebugLevelChange(event) {
   } catch (error) {
     console.error('Error setting debug level:', error);
     showNotification('Error setting debug level', 'error');
+    loadState(); // Reload to restore actual value
+  }
+}
+
+// Handle display mode change (portrait/landscape)
+async function handleDisplayModeChange(event) {
+  const isLandscape = event.target.value === 'landscape';
+
+  try {
+    const response = await fetch('/api/config', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ landscapeMode: isLandscape })
+    });
+
+    if (!response.ok) throw new Error('Failed to set display mode');
+
+    showNotification(`Display mode changed to ${event.target.value}`, 'success');
+    console.log('Display mode changed to:', event.target.value);
+  } catch (error) {
+    console.error('Error setting display mode:', error);
+    showNotification('Error setting display mode', 'error');
     loadState(); // Reload to restore actual value
   }
 }

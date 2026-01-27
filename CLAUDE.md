@@ -2,12 +2,14 @@
 
 ## Overview
 
-World clock displaying current time across 6 configurable timezones (1 home + 5 remote cities) on a 2.8" ILI9341 TFT display. Features web-based configuration, NVS persistent storage, OTA updates, custom timezone entry, 5-level debug system, and anti-flicker selective redraws with smooth fonts from LittleFS.
+World clock displaying current time across 6 configurable timezones (1 home + 5 remote cities) on a 2.8" ILI9341 TFT display. Features dual display modes (portrait digital / landscape with analogue clock), web-based configuration with live clock mirror, NVS persistent storage, OTA updates, custom timezone entry, 5-level debug system, and anti-flicker selective redraws with smooth fonts from LittleFS.
 
 ## Hardware
 
 - MCU: ESP32 (ESP32-2432S028 "CYD" board)
-- Display: ILI9341 2.8" TFT (240x320 pixels, portrait orientation)
+- Display: ILI9341 2.8" TFT (240x320 portrait / 320x240 landscape)
+- Touch: XPT2046 resistive touch screen
+- LDR: Light Dependent Resistor for ambient light sensing
 - Power: USB 5V via CYD board
 
 ## Build Environment
@@ -25,7 +27,7 @@ World clock displaying current time across 6 configurable timezones (1 home + 5 
 
 ```txt
 ├── src/
-│   └── main.cpp              # Main implementation (~850 lines)
+│   └── main.cpp              # Main implementation (~2100 lines)
 ├── include/
 │   ├── User_Setup.h          # TFT_eSPI hardware config
 │   └── timezones.h           # 102 predefined timezones across 13 regions
@@ -45,6 +47,8 @@ World clock displaying current time across 6 configurable timezones (1 home + 5 
 
 ## Pin Mapping
 
+### Display (ILI9341)
+
 | Function | GPIO | Notes                |
 |----------|------|----------------------|
 | TFT_MOSI | 13   | SPI data out         |
@@ -55,6 +59,22 @@ World clock displaying current time across 6 configurable timezones (1 home + 5 
 | TFT_RST  | -1   | Tied to ESP32 RST    |
 | TFT_BL   | 21   | Backlight (active)   |
 
+### Touch Screen (XPT2046)
+
+| Function   | GPIO | Notes                   |
+|------------|------|-------------------------|
+| Touch IRQ  | 36   | T_IRQ (active LOW)      |
+| Touch MOSI | 32   | T_DIN                   |
+| Touch MISO | 39   | T_OUT (board-specific)  |
+| Touch CLK  | 25   | T_CLK                   |
+| Touch CS   | 33   | T_CS                    |
+
+### Sensors
+
+| Function | GPIO | Notes                    |
+|----------|------|--------------------------|
+| LDR      | 34   | Analog input (0-4095)    |
+
 ## Configuration System
 
 ### Persistent Storage (NVS)
@@ -62,8 +82,8 @@ World clock displaying current time across 6 configurable timezones (1 home + 5 
 Config stored in ESP32 NVS (Non-Volatile Storage) via Preferences API:
 
 - **Namespace**: `"worldclock"`
-- **Keys**: `homeLabel`, `homeTz`, `remote0Label`, `remote0Tz`, ..., `remote4Label`, `remote4Tz`
-- **Load/Save**: `loadConfig()` / `saveConfig()` functions (lines 96-158)
+- **Keys**: `homeLabel`, `homeTz`, `remote0Label`, `remote0Tz`, ..., `remote4Label`, `remote4Tz`, `landscape`
+- **Load/Save**: `loadConfig()` / `saveConfig()` functions (lines 446-496)
 
 ### Default Configuration
 
@@ -93,17 +113,17 @@ Remote Cities:
 - **Macros**: `DBG_ERROR()`, `DBG_WARN()`, `DBG_INFO()`, `DBG_VERBOSE()`
 - **Output**: Formatted with level prefixes, 115200 baud
 
-### Network Settings (lines 59-71)
+### Network Settings (line 160)
 
 ```cpp
-FIRMWARE_VERSION = "2.0.0"
+FIRMWARE_VERSION = "2.4.0"
 OTA_HOSTNAME = "WorldClock"
 OTA_PASSWORD = "change-me"  // ⚠️ CHANGE IN PRODUCTION
 NTP_SERVER1 = "pool.ntp.org"
 NTP_SERVER2 = "time.nist.gov"
 ```
 
-### Display Layout (lines 139-157)
+### Display Layout (lines 508-546)
 
 ```cpp
 // Colors
@@ -111,26 +131,41 @@ COLOR_BG = TFT_BLACK
 COLOR_LABEL = TFT_WHITE
 COLOR_TIME = TFT_GREEN
 
-// Layout
+// Portrait mode layout (240x320)
 kHeaderHeight = 40px        // "WORLD CLOCK" + date
-kPad = 10px                 // Left padding
+kPad = 8px                  // Left padding
 6 cities × 46.7px per row   // Home + 5 remote
 
+// Landscape mode layout (320x240)
+kLeftPanelWidth = 120px     // Title, date, clock, home city
+kRightPanelWidth = 200px    // 5 remote cities
+kLandscapeRemoteRowHeight = 48px  // 240 / 5 = 48px per row
+
+// Analogue clock settings
+kClockCenterX = 60          // Center of left panel
+kClockCenterY = 95          // Vertical center
+kClockRadius = 50           // Clock face radius
+kHourHandLen = 25           // Hour hand length
+kMinuteHandLen = 35         // Minute hand length
+kSecondHandLen = 40         // Second hand length
+
 // Fonts
-kFontTitle = "NotoSans-Bold16" (fallback: 4)
-kFontDate = "NotoSans-Bold10" (fallback: 2)
-kFontLabel = "NotoSans-Bold9" (fallback: 2)
-kFontTime = "NotoSans-Bold10" (fallback: 2)
-kFontNote = "NotoSans-Bold7" (fallback: 1)
+kFontHeader = "NotoSans-Bold9" (fallback: 2)
+kFontLabel = "NotoSans-Bold10" (fallback: 4)
+kFontTime = "NotoSans-Bold16" (fallback: 6)
+kFontNote = "NotoSans-Bold7" (fallback: 2)
 ```
 
-## Current State (v2.3.0)
+## Current State (v2.4.0)
 
 ### Features
 
 - **6 Cities**: 1 home (reference timezone) + 5 remote cities
-- **Web Configuration**: Full WebUI at `http://<device-ip>`
-- **Persistent Config**: NVS storage, survives reboots
+- **Dual Display Modes**: Portrait (240x320) or Landscape (320x240) with analogue clock
+- **Analogue Clock**: Real-time clock face with hour, minute, and second hands
+- **Web Configuration**: Full WebUI at `http://<device-ip>` with live clock mirror
+- **Display Mode Toggle**: Switch between portrait/landscape via WebUI
+- **Persistent Config**: NVS storage, survives reboots (including display mode)
 - **Custom Timezones**: Manual POSIX string entry for unlisted cities
 - **OTA Updates**: Wireless firmware updates with progress bar
 - **Debug System**: 5-level runtime-adjustable logging
@@ -141,16 +176,17 @@ kFontNote = "NotoSans-Bold7" (fallback: 1)
 - **State Caching**: Flicker-free selective redraws
 - **Home Indicator**: Cyan "Home" label under reference city
 - **Prev Day Indicator**: Yellow "PREV DAY" for cities in previous day
+- **LDR Support**: Ambient light sensing (for future brightness control)
 
-### Display Layout
+### Display Layout - Portrait Mode (240x320)
 
 ```txt
 ┌─────────────────────────┐
-│   WORLD CLOCK           │ ← Title (cyan)
-│   FRI 18 JAN            │ ← Date from home city
+│   WORLD CLOCK           │ ← Title (white)
+│   TUE 28 JAN            │ ← Date from home city
 ├─────────────────────────┤
-│ SYDNEY         14:23    │ ← Home city
-│   Home                  │ ← Cyan indicator
+│ SYDNEY         14:23    │ ← Home city (green time)
+│   HOME                  │ ← Cyan indicator
 ├─────────────────────────┤
 │ VANCOUVER      20:23    │
 │   PREV DAY              │ ← Yellow if in previous day
@@ -166,21 +202,56 @@ kFontNote = "NotoSans-Bold7" (fallback: 1)
 └─────────────────────────┘
 ```
 
+### Display Layout - Landscape Mode (320x240)
+
+```txt
+┌────────────┬────────────────────────────┐
+│WORLD CLOCK │ VANCOUVER        20:23    │
+│TUE 28 JAN  │   PREV DAY                │
+├────────────┼────────────────────────────┤
+│    ╭───╮   │ LONDON           04:23    │
+│   /  |  \  │                           │
+│  │   •───│ │ NAIROBI          07:23    │
+│   \     /  │                           │
+│    ╰───╯   │ DENVER           21:23    │
+│            │   PREV DAY                │
+│  SYDNEY    ├────────────────────────────┤
+│   HOME     │ TOKYO            13:23    │
+│   14:23    │                           │
+└────────────┴────────────────────────────┘
+ Left Panel     Right Panel (5 remote cities)
+  (120px)              (200px)
+```
+
+### Analogue Clock Details
+
+- **Hour markers**: 12 positions, thicker at 12/3/6/9
+- **Hour hand**: White, 3px thick, 25px length, moves with minutes
+- **Minute hand**: White, 2px thick, 35px length
+- **Second hand**: Red, 1px thick, 40px length
+- **Center dot**: White, 3px radius
+- **Face circle**: Dark grey outline
+
 ### WebUI Features
 
+- **Live Clock Display**: Real-time mirror of all city times (updates every 2 seconds)
+- **Display Mode Toggle**: Switch between portrait and landscape modes
 - **Timezone Dropdowns**: 102 predefined cities grouped by region
 - **Custom Entry**: Manual POSIX timezone string input
 - **Live Preview**: Shows timezone string for selected city
-- **System Status**: Firmware, hostname, WiFi, IP, uptime
+- **System Status**: Firmware, hostname, WiFi, IP, uptime, free heap, LDR value
+- **Debug Level Control**: Adjust logging verbosity via dropdown
 - **System Actions**: Reboot device, reset WiFi credentials
-- **Auto-refresh**: Status updates every 30 seconds
+- **Auto-refresh**: Status updates every 5 seconds
 
 ### REST API Endpoints
 
 ```txt
 GET  /api/state       - System status + current config (JSON)
+GET  /api/mirror      - Current clock display data for all cities (JSON)
 GET  /api/timezones   - List of 102 predefined timezones (JSON)
-POST /api/config      - Update timezone configuration
+POST /api/config      - Update timezone configuration and display mode
+POST /api/debug-level - Change debug level at runtime
 POST /api/reboot      - Reboot device
 POST /api/reset-wifi  - Clear WiFi credentials and reboot to AP mode
 GET  /                - Web UI (index.html)
@@ -190,7 +261,7 @@ GET  /style.css       - WebUI styling
 
 ## Architecture Notes
 
-### Config Structure (lines 73-93)
+### Config Structure (lines 164-172)
 
 ```cpp
 struct Config {
@@ -198,18 +269,24 @@ struct Config {
   char homeCityTz[64];         // Home POSIX timezone
   char remoteCities[5][32];    // 5 remote city names
   char remoteTzStrings[5][64]; // 5 remote POSIX timezones
+  bool landscapeMode;          // Display orientation: true = landscape
 };
 ```
 
-### State Caching (lines 175-179)
+### State Caching (lines 552-566)
 
 Minimizes TFT writes and prevents flicker:
 
 ```cpp
-String lastDate;           // Last drawn date
-String lastTimes[6];       // Last drawn time for each city
+char lastDate[16];         // Last drawn date
+char lastTimes[6][8];      // Last drawn time for each city ("HH:MM")
 bool lastPrevDay[6];       // Last "PREV DAY" state
 bool lastColonState[6];    // Last colon blink state
+
+// Analogue clock state (landscape mode)
+int lastSecond = -1;       // Last drawn second hand position
+int lastMinute = -1;       // Last drawn minute hand position
+int lastHour = -1;         // Last drawn hour hand position
 ```
 
 ### Selective Redraw Logic
@@ -220,16 +297,21 @@ bool lastColonState[6];    // Last colon blink state
 - **Prev Day**: Only redraws when day boundary crossed
 - **Labels**: Only redrawn during `drawStaticLayout()` after config change
 
-### Timezone Switching
+### Timezone Calculation (No Memory Leak)
 
-Uses `setenv("TZ", ...)` + `tzset()` to dynamically evaluate time in different zones:
+Uses manual POSIX timezone parsing instead of `setenv()` to avoid memory leaks:
 
 ```cpp
-setenv("TZ", config.homeCityTz, 1);
-tzset();
-struct tm timeinfo;
-getLocalTime(&timeinfo);
-// Now timeinfo contains home city's local time
+// Parse timezone once at config load
+ParsedTimezone parsedTz[6];
+parseTimezoneString(config.homeCityTz, &parsedTz[0]);
+
+// Get local time without setenv - NO MEMORY LEAK
+void getLocalTimeNoSetenv(time_t utc, const ParsedTimezone* tz, struct tm* out) {
+  int16_t offsetMins = isDstActive(utc, tz) ? tz->dstOffsetMins : tz->stdOffsetMins;
+  time_t local = utc + (offsetMins * 60);
+  gmtime_r(&local, out);  // No setenv needed!
+}
 ```
 
 ### Font Management
@@ -265,27 +347,28 @@ if (remoteTm.tm_year < homeTm.tm_year ||
 11. Draw clock interface
 12. Enter main loop
 
-### Main Loop (lines 826-862)
+### Main Loop
 
 ```cpp
 loop() {
   ArduinoOTA.handle();      // Handle OTA updates
   server.handleClient();    // Handle web requests
 
-  // Get current time and format for all cities
-  time_t now = time(nullptr);
-  struct tm homeTm;
-  getLocalTm(config.homeCityTz, now, &homeTm);
-
-  // Update display (selective redraws)
-  drawTimes(homeTm);
-
-  // Debug output (level 3): print all city times
-  if (debugLevel >= DBG_LEVEL_INFO) {
-    // Print formatted times for all 6 cities
+  // Touch handling (50ms polling)
+  if (millis() - lastTouchPoll >= 50) {
+    handleTouch();
+    lastTouchPoll = millis();
   }
 
-  delay(1000);  // 1 second update interval
+  // Display update (1 second interval)
+  if (millis() - lastDisplayUpdate >= 1000) {
+    if (showingDiagnostics) {
+      checkDiagnosticsTimeout();
+    } else {
+      drawTimes();  // Calls drawTimesPortrait() or drawTimesLandscape()
+    }
+    lastDisplayUpdate = millis();
+  }
 }
 ```
 
@@ -324,8 +407,9 @@ Simple globe animation:
 
 ## Memory Usage
 
-- **Flash**: 1,016,021 bytes (77.5% of 1.3MB)
-- **RAM**: 51,136 bytes (15.6% of 320KB)
+- **Flash**: ~1,050,000 bytes (~80% of 1.3MB)
+- **RAM**: ~54,000 bytes (~16.5% of 320KB)
+- **Heap**: Stable at ~200KB+ (no memory leak)
 
 ## WiFi Behavior
 
@@ -383,6 +467,8 @@ void getLocalTimeNoSetenv(time_t utc, const ParsedTimezone* tz, struct tm* out) 
 - ✅ 6th city support - Added in v2.0.0
 - ✅ Touch screen diagnostics - Added in v2.1.0
 - ✅ Memory leak - Reduced in v2.2.0, **eliminated in v2.3.0**
+- ✅ Display mirror in WebUI - Added in v2.4.0
+- ✅ Multiple display modes - Portrait/Landscape added in v2.4.0
 
 ## Known Limitations
 
@@ -525,29 +611,90 @@ for (int i = 0; i < 6; i++) {
 }
 ```
 
+## Analogue Clock Implementation (v2.4.0)
+
+### Clock Face Drawing
+
+`drawAnalogClockFace()` draws the static elements:
+- Circle outline (dark grey, 50px radius)
+- 12 hour markers (thicker at 12/3/6/9)
+- Center dot (white, 3px)
+
+### Hand Drawing
+
+`drawClockHand(cx, cy, length, angleDeg, color, thickness)`:
+- Converts angle to radians (0° = 12 o'clock, clockwise)
+- Draws line from center to calculated endpoint
+- Supports variable thickness via parallel lines
+
+### Selective Redraw
+
+`updateAnalogClockHands(hour, minute, second)`:
+1. Calculate new hand angles
+2. Erase old hands (draw in background color)
+3. Draw new hands (hour → minute → second order)
+4. Redraw center dot
+
+### Angle Calculations
+
+```cpp
+// Hour: 30° per hour + 0.5° per minute (smooth movement)
+float hourAngle = (hour % 12) * 30.0f + minute * 0.5f;
+// Minute: 6° per minute
+float minuteAngle = minute * 6.0f;
+// Second: 6° per second
+float secondAngle = second * 6.0f;
+```
+
+## LDR (Light Sensor) Support
+
+### Hardware
+- Connected to GPIO34 (analog input)
+- ADC range: 0-4095 (12-bit)
+- 11dB attenuation for 0-3.3V range
+
+### Reading
+
+```cpp
+int readLDR() {
+  uint32_t sum = 0;
+  for (int i = 0; i < 10; i++) {
+    sum += analogRead(LDR_PIN);
+    delay(1);
+  }
+  return sum / 10;  // 10-sample average
+}
+```
+
+### Current Use
+- Value displayed in WebUI System Status
+- Future: automatic brightness control
+
 ## Future Enhancements
 
 - [ ] WiFi reconnect logic in main loop
 - [ ] Automatic NTP resync every 24 hours
-- [ ] Tidy up WebUI - selecting remote cities and dropdown not intuitive
-- [ ] Add display mirror of TFT to WebUI (as per other clock projects)
+- [ ] Automatic brightness control using LDR
+- [ ] Touch-based city selection/editing
 - [x] ~~Touch support for diagnostics~~ - **COMPLETED v2.1.0**
 - [x] ~~API endpoint for debug level adjustment~~ - **COMPLETED v2.0.0**
+- [x] ~~Display mirror of TFT to WebUI~~ - **COMPLETED v2.4.0**
+- [x] ~~Multiple display modes~~ - **COMPLETED v2.4.0** (portrait/landscape)
 - [ ] Weather API integration per city
 - [ ] Temperature/humidity display
 - [ ] User-configurable color schemes
 - [ ] MQTT support for home automation
-- [ ] Multiple display modes (clock only, weather, mixed)
 
 ## Version History
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed version history.
 
-**Current Version**: 2.3.1 (2026-01-26)
+**Current Version**: 2.4.0 (2026-01-28)
 
-- WiFi configuration portal now stays open indefinitely (no timeout)
-- Simplified AP naming: "WorldClock-Setup" / "WorldClock-AP"
-- Enhanced WebUI with larger fonts and improved spacing
-- Mobile-responsive design for phone/tablet viewing
-- Fixed WiFiManager browser auto-request errors
+- **Landscape mode** with analogue clock display
+- **Display mode toggle** via WebUI (portrait/landscape)
+- **Live clock mirror** in WebUI (2-second refresh)
+- **LDR support** for ambient light sensing
+- **Flicker-free clock hands** with selective redraw
+- **Persistent display mode** in NVS storage
 - Eliminated memory leak (v2.3.0) - heap stable indefinitely
