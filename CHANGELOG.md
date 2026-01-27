@@ -5,6 +5,50 @@ All notable changes to the CYD World Clock project will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-01-28
+
+### Added - NEXT DAY Indicator & Screenshot Capture
+
+#### NEXT DAY Indicator
+- **New visual indicator** for cities ahead of home city (e.g., home=London, remote=Sydney shows "NEXT DAY")
+- **Cyan color** (#00FFFF) to distinguish from yellow "PREV DAY" indicator
+- **Works in both modes**: Portrait and Landscape display modes
+- **WebUI mirror support**: Canvas renderer shows NEXT DAY indicator
+- **API updated**: `/api/mirror` now includes `nextDay` boolean for each city
+
+#### Screenshot Capture via WebUI
+- **New endpoint**: `GET /api/snapshot` streams BMP image directly from TFT display
+- **True pixel capture**: Downloads actual TFT framebuffer data, not canvas recreation
+- **BMP format**: 24-bit RGB, row-by-row streaming to minimize memory usage
+- **Colon sync**: Waits for even second to ensure colons are visible in screenshot
+- **WebUI button**: "Capture Screenshot" button in Display Mirror section
+- **Filename**: Downloads as `clock_snapshot.bmp`
+
+### Fixed
+
+#### Colon Alignment Issue
+- **Problem**: The ":" between HH and MM was misaligned initially, fixing itself after a minute
+- **Root cause**: Selective colon redraw was drawing at slightly different position than full time string
+- **Solution**: Changed from selective colon update to full time string redraw
+  - When colon visible: draws "HH:MM"
+  - When colon hidden: draws "HH MM" (space instead of colon)
+- **Applied to**: Portrait mode, landscape home city, and landscape remote cities
+
+#### PREV/NEXT DAY Update Delay
+- **Problem**: After config change (e.g., swapping Sydney↔London), PREV/NEXT DAY took several seconds to update
+- **Solution**: Added `lastBatchUpdate = 0;` after config save to force immediate time recalculation
+
+### Changed
+- **WebUI**: Added snapshot button with loading state and success notification
+- **API response**: `/api/mirror` includes `nextDay` field for all cities
+- **README**: Updated with TFT display screenshots (TFT_Portrait.jpg, TFT_Landscape.jpg) above WebUI screenshots
+
+### Documentation
+- **README.md**: Added TFT Display and Web Interface screenshot sections
+- **Visual Indicators**: Updated to document both PREV DAY (yellow) and NEXT DAY (cyan)
+
+---
+
 ## [2.4.0] - 2026-01-28
 
 ### Added - Landscape Mode with Analogue Clock

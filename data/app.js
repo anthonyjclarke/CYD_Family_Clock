@@ -4,17 +4,15 @@
 let timezones = [];
 
 // Load state on page load
-document.addEventListener('DOMContentLoaded', () => {
-  loadTimezones();
-  loadState();
-
-  // Set up event listeners
+document.addEventListener('DOMContentLoaded', async () => {
+  // Set up event listeners first (before any async operations)
   document.getElementById('configForm').addEventListener('submit', handleSaveConfig);
   document.getElementById('reloadBtn').addEventListener('click', loadState);
   document.getElementById('rebootBtn').addEventListener('click', handleReboot);
   document.getElementById('resetWifiBtn').addEventListener('click', handleResetWiFi);
   document.getElementById('debugLevel').addEventListener('change', handleDebugLevelChange);
   document.getElementById('displayMode').addEventListener('change', handleDisplayModeChange);
+  document.getElementById('snapshotBtn').addEventListener('click', handleSnapshot);
 
   // Timezone dropdown change listeners
   document.getElementById('homeSelect').addEventListener('change', updateTimezoneFields);
@@ -24,14 +22,20 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('remote3Select').addEventListener('change', updateTimezoneFields);
   document.getElementById('remote4Select').addEventListener('change', updateTimezoneFields);
 
-  // Start auto-refresh polling (5-second interval to reduce memory pressure)
+  // Load timezones FIRST, then load state (must be in order)
+  // This prevents race condition where loadState runs before dropdowns are populated
+  await loadTimezones();
+  await loadState();
+
+  // Start polling AFTER initial load is complete
   startPolling();
 });
 
 // Polling function with timeout-based approach (non-blocking)
+// Only updates status and mirror - does NOT touch form fields to preserve user edits
 async function tick() {
   try {
-    await loadState();
+    await updateStatus();
     await updateMirror();
   } catch (e) {
     console.warn('Polling error:', e);
@@ -207,7 +211,31 @@ function setTimezoneDropdown(prefix, label, tz) {
   }
 }
 
-// Load current state from device
+// Update status display only (called during polling - doesn't touch form fields)
+async function updateStatus() {
+  try {
+    const response = await fetch('/api/state');
+    if (!response.ok) throw new Error('Failed to fetch state');
+
+    const data = await response.json();
+
+    // Update status display only - NOT form fields
+    document.getElementById('firmware').textContent = data.firmware || '--';
+    document.getElementById('hostname').textContent = data.hostname || '--';
+    document.getElementById('wifi_ssid').textContent = data.wifi_ssid || '--';
+    document.getElementById('wifi_ip').textContent = data.wifi_ip || '--';
+    document.getElementById('wifi_rssi').textContent = (data.wifi_rssi || '--') + ' dBm';
+    document.getElementById('uptime').textContent = formatUptime(data.uptime || 0);
+    document.getElementById('freeHeap').textContent = formatBytes(data.freeHeap || 0);
+    document.getElementById('ldrValue').textContent = data.ldrValue !== undefined ? data.ldrValue : '--';
+    document.getElementById('displayMode').value = data.landscapeMode ? 'landscape' : 'portrait';
+    document.getElementById('debugLevel').value = data.debugLevel || 3;
+  } catch (error) {
+    console.error('Error updating status:', error);
+  }
+}
+
+// Load full state including form fields (called on initial load and "Reload from Device")
 async function loadState() {
   try {
     const response = await fetch('/api/state');
@@ -227,7 +255,7 @@ async function loadState() {
     document.getElementById('displayMode').value = data.landscapeMode ? 'landscape' : 'portrait';
     document.getElementById('debugLevel').value = data.debugLevel || 3;
 
-    // Update form fields
+    // Update form fields (only on explicit load, not during polling)
     if (data.homeCity) {
       setTimezoneDropdown('home', data.homeCity.label, data.homeCity.tz);
     }
@@ -353,6 +381,31 @@ async function handleResetWiFi() {
   }
 }
 
+// Handle screenshot capture - downloads BMP image from TFT display
+function handleSnapshot() {
+  const btn = document.getElementById('snapshotBtn');
+  const originalText = btn.textContent;
+
+  // Show loading state
+  btn.textContent = 'Capturing...';
+  btn.disabled = true;
+
+  // Create a hidden link to trigger download
+  const link = document.createElement('a');
+  link.href = '/api/snapshot';
+  link.download = 'clock_snapshot.bmp';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+
+  // Reset button after a delay (download starts in background)
+  setTimeout(() => {
+    btn.textContent = originalText;
+    btn.disabled = false;
+    showNotification('Screenshot captured!', 'success');
+  }, 2000);
+}
+
 // Handle debug level change
 async function handleDebugLevelChange(event) {
   const level = parseInt(event.target.value);
@@ -461,8 +514,59 @@ function showNotification(message, type) {
 }
 
 // ====================================
-// Live Clock Display Functions
+// Canvas Display Mirror - Pixel-accurate TFT recreation
 // ====================================
+
+// Layout constants matching main.cpp
+const LAYOUT = {
+  // Portrait mode: 240x320
+  portrait: {
+    width: 240,
+    height: 320,
+    titleHeight: 22,
+    dateHeight: 18,
+    headerHeight: 40,  // titleHeight + dateHeight
+    pad: 8,
+    cityRowHeight: 46.7  // (320 - 40) / 6 = 46.67
+  },
+  // Landscape mode: 320x240
+  landscape: {
+    width: 320,
+    height: 240,
+    leftPanelWidth: 120,
+    rightPanelWidth: 200,
+    remoteRowHeight: 48,  // 240 / 5 = 48
+    clock: {
+      centerX: 60,
+      centerY: 120,  // Centered between date (y~60) and digital time (y=185)
+      radius: 50,
+      hourHandLen: 25,
+      minuteHandLen: 35,
+      secondHandLen: 40
+    }
+  },
+  // Colors (matching TFT colors)
+  colors: {
+    bg: '#000000',
+    label: '#FFFFFF',
+    time: '#00FF00',
+    home: '#00FFFF',
+    prevDay: '#FFFF00',
+    nextDay: '#00FFFF',
+    title: '#00FFFF',
+    clockFace: '#404040',
+    hourMarker: '#FFFFFF',
+    hourHand: '#FFFFFF',
+    minuteHand: '#FFFFFF',
+    secondHand: '#FF0000'
+  },
+  // Display scale factor for WebUI (larger screens get scaled up)
+  scale: window.innerWidth >= 600 ? 1.5 : 1.0
+};
+
+// Canvas context (initialized on first render)
+let ctx = null;
+let canvas = null;
 
 // Fetch clock data from ESP32
 async function fetchClock() {
@@ -475,49 +579,274 @@ async function fetchClock() {
   }
 }
 
-// Render clock display
+// Initialize canvas with correct dimensions (scaled for visibility)
+function initCanvas(isLandscape) {
+  canvas = document.getElementById('displayCanvas');
+  if (!canvas) return false;
+
+  const scale = LAYOUT.scale;
+  const baseWidth = isLandscape ? LAYOUT.landscape.width : LAYOUT.portrait.width;
+  const baseHeight = isLandscape ? LAYOUT.landscape.height : LAYOUT.portrait.height;
+  const width = Math.round(baseWidth * scale);
+  const height = Math.round(baseHeight * scale);
+
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+
+  ctx = canvas.getContext('2d');
+  // Apply scale transform so drawing code uses original coordinates
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  return true;
+}
+
+// Clear canvas with background color (uses original coordinates due to scale transform)
+function clearCanvas(isLandscape) {
+  const width = isLandscape ? LAYOUT.landscape.width : LAYOUT.portrait.width;
+  const height = isLandscape ? LAYOUT.landscape.height : LAYOUT.portrait.height;
+  ctx.fillStyle = LAYOUT.colors.bg;
+  ctx.fillRect(0, 0, width, height);
+}
+
+// Draw text with specified font and color
+function drawText(text, x, y, color, fontSize, fontWeight = 'bold', align = 'left') {
+  ctx.fillStyle = color;
+  ctx.font = `${fontWeight} ${fontSize}px "Courier New", monospace`;
+  ctx.textAlign = align;
+  ctx.textBaseline = 'top';
+  ctx.fillText(text, x, y);
+}
+
+// Render portrait mode display
+function renderPortrait(data) {
+  const L = LAYOUT.portrait;
+  const C = LAYOUT.colors;
+
+  clearCanvas(false);
+
+  // Header: "WORLD CLOCK" title
+  drawText('WORLD CLOCK', L.width / 2, 4, C.title, 16, 'bold', 'center');
+
+  // Header: Date
+  drawText(data.date || '--', L.width / 2, L.titleHeight + 2, C.time, 14, 'bold', 'center');
+
+  // Draw separator line under header
+  ctx.strokeStyle = '#333333';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, L.headerHeight);
+  ctx.lineTo(L.width, L.headerHeight);
+  ctx.stroke();
+
+  // Home city (index 0)
+  const homeY = L.headerHeight + 4;
+  drawText(data.home?.label || '--', L.pad, homeY, C.label, 14, 'bold');
+  drawText(data.home?.time || '--:--', L.width - L.pad, homeY, C.time, 22, 'bold', 'right');
+  drawText('HOME', L.pad, homeY + 24, C.home, 10, 'normal');
+  if (data.home?.prevDay) {
+    drawText('PREV DAY', L.pad + 40, homeY + 24, C.prevDay, 10, 'normal');
+  } else if (data.home?.nextDay) {
+    drawText('NEXT DAY', L.pad + 40, homeY + 24, C.nextDay, 10, 'normal');
+  }
+
+  // Remote cities (5 cities)
+  if (data.remote && data.remote.length > 0) {
+    data.remote.forEach((city, i) => {
+      const rowY = L.headerHeight + L.cityRowHeight * (i + 1) + 4;
+
+      // Separator line
+      ctx.strokeStyle = '#222222';
+      ctx.beginPath();
+      ctx.moveTo(0, rowY - 4);
+      ctx.lineTo(L.width, rowY - 4);
+      ctx.stroke();
+
+      // City label
+      drawText(city.label || '--', L.pad, rowY, C.label, 14, 'bold');
+
+      // Time
+      drawText(city.time || '--:--', L.width - L.pad, rowY, C.time, 22, 'bold', 'right');
+
+      // Prev day or Next day indicator
+      if (city.prevDay) {
+        drawText('PREV DAY', L.pad, rowY + 24, C.prevDay, 10, 'normal');
+      } else if (city.nextDay) {
+        drawText('NEXT DAY', L.pad, rowY + 24, C.nextDay, 10, 'normal');
+      }
+    });
+  }
+}
+
+// Draw analog clock face (landscape mode)
+function drawClockFace() {
+  const clk = LAYOUT.landscape.clock;
+  const C = LAYOUT.colors;
+
+  // Clock face circle
+  ctx.strokeStyle = C.clockFace;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(clk.centerX, clk.centerY, clk.radius, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Hour markers (12 positions)
+  for (let i = 0; i < 12; i++) {
+    const angleDeg = i * 30;
+    const angleRad = (angleDeg - 90) * Math.PI / 180;
+    const outerR = clk.radius - 3;
+    const innerR = clk.radius - 8;
+
+    const x1 = clk.centerX + innerR * Math.cos(angleRad);
+    const y1 = clk.centerY + innerR * Math.sin(angleRad);
+    const x2 = clk.centerX + outerR * Math.cos(angleRad);
+    const y2 = clk.centerY + outerR * Math.sin(angleRad);
+
+    ctx.strokeStyle = C.hourMarker;
+    ctx.lineWidth = (i % 3 === 0) ? 2 : 1;  // Thicker at 12, 3, 6, 9
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  }
+}
+
+// Draw clock hand
+function drawClockHand(length, angleDeg, color, thickness) {
+  const clk = LAYOUT.landscape.clock;
+  const angleRad = (angleDeg - 90) * Math.PI / 180;
+  const x2 = clk.centerX + length * Math.cos(angleRad);
+  const y2 = clk.centerY + length * Math.sin(angleRad);
+
+  ctx.strokeStyle = color;
+  ctx.lineWidth = thickness;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(clk.centerX, clk.centerY);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+}
+
+// Draw analog clock with hands
+function drawAnalogClock(hour, minute, second) {
+  const clk = LAYOUT.landscape.clock;
+  const C = LAYOUT.colors;
+
+  // Draw clock face
+  drawClockFace();
+
+  // Calculate angles
+  // Hour: 30 deg per hour + 0.5 deg per minute (smooth movement)
+  const hourAngle = (hour % 12) * 30 + minute * 0.5;
+  // Minute: 6 deg per minute
+  const minuteAngle = minute * 6;
+  // Second: 6 deg per second
+  const secondAngle = second * 6;
+
+  // Draw hands (hour first, then minute, then second on top)
+  drawClockHand(clk.hourHandLen, hourAngle, C.hourHand, 3);
+  drawClockHand(clk.minuteHandLen, minuteAngle, C.minuteHand, 2);
+  drawClockHand(clk.secondHandLen, secondAngle, C.secondHand, 1);
+
+  // Center dot
+  ctx.fillStyle = C.hourMarker;
+  ctx.beginPath();
+  ctx.arc(clk.centerX, clk.centerY, 3, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// Render landscape mode display
+function renderLandscape(data) {
+  const L = LAYOUT.landscape;
+  const C = LAYOUT.colors;
+
+  clearCanvas(true);
+
+  // === LEFT PANEL (120px) ===
+  // Layout: City (y=6) → HOME (y=30) → Date (y=48) → Clock (y=120) → Time (y=185)
+
+  // Home city name (top) - smaller font for long names (>9 chars)
+  const homeLabel = data.home?.label || '--';
+  const homeFontSize = homeLabel.length > 9 ? 10 : 14;
+  drawText(homeLabel, L.leftPanelWidth / 2, 6, C.label, homeFontSize, 'bold', 'center');
+
+  // HOME indicator
+  drawText('HOME', L.leftPanelWidth / 2, 30, C.home, 10, 'normal', 'center');
+
+  // Date
+  drawText(data.date || '--', L.leftPanelWidth / 2, 48, C.time, 11, 'bold', 'center');
+
+  // Analog clock (centered in middle section)
+  if (data.clock) {
+    drawAnalogClock(data.clock.hour, data.clock.minute, data.clock.second);
+  }
+
+  // Digital time (bottom)
+  drawText(data.home?.time || '--:--', L.leftPanelWidth / 2, 185, C.time, 20, 'bold', 'center');
+
+  // Prev day or Next day indicator (if applicable)
+  if (data.home?.prevDay) {
+    drawText('PREV DAY', L.leftPanelWidth / 2, 210, C.prevDay, 9, 'normal', 'center');
+  } else if (data.home?.nextDay) {
+    drawText('NEXT DAY', L.leftPanelWidth / 2, 210, C.nextDay, 9, 'normal', 'center');
+  }
+
+  // Vertical separator line
+  ctx.strokeStyle = '#333333';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(L.leftPanelWidth, 0);
+  ctx.lineTo(L.leftPanelWidth, L.height);
+  ctx.stroke();
+
+  // === RIGHT PANEL (200px) - 5 remote cities ===
+  const rightX = L.leftPanelWidth + 8;
+
+  if (data.remote && data.remote.length > 0) {
+    data.remote.forEach((city, i) => {
+      const rowY = i * L.remoteRowHeight + 4;
+
+      // Separator line (except first row)
+      if (i > 0) {
+        ctx.strokeStyle = '#222222';
+        ctx.beginPath();
+        ctx.moveTo(L.leftPanelWidth, rowY - 2);
+        ctx.lineTo(L.width, rowY - 2);
+        ctx.stroke();
+      }
+
+      // City label - smaller font for long names (>9 chars)
+      const cityLabel = city.label || '--';
+      const cityFontSize = cityLabel.length > 9 ? 9 : 12;
+      drawText(cityLabel, rightX, rowY + 2, C.label, cityFontSize, 'bold');
+
+      // Time
+      drawText(city.time || '--:--', L.width - 8, rowY + 2, C.time, 20, 'bold', 'right');
+
+      // Prev day or Next day indicator
+      if (city.prevDay) {
+        drawText('PREV DAY', rightX, rowY + 20, C.prevDay, 9, 'normal');
+      } else if (city.nextDay) {
+        drawText('NEXT DAY', rightX, rowY + 20, C.nextDay, 9, 'normal');
+      }
+    });
+  }
+}
+
+// Main render function - chooses portrait or landscape
 function renderClock(data) {
   if (!data) return;
 
-  // Update date
-  document.getElementById('clockDate').textContent = data.date || '--';
+  const isLandscape = data.landscapeMode === true;
 
-  // Update home city
-  document.getElementById('homeCity').textContent = data.home?.label || '--';
-  document.getElementById('homeTime').textContent = data.home?.time || '--:--';
+  // Initialize/resize canvas if needed
+  if (!initCanvas(isLandscape)) return;
 
-  // Update remote cities
-  const remoteContainer = document.getElementById('clockRemote');
-  remoteContainer.innerHTML = '';
-
-  if (data.remote && data.remote.length > 0) {
-    data.remote.forEach(city => {
-      const cityDiv = document.createElement('div');
-      cityDiv.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #222;';
-
-      const labelDiv = document.createElement('div');
-
-      const cityLabel = document.createElement('span');
-      cityLabel.textContent = city.label || '--';
-      cityLabel.style.cssText = 'color: #fff; font-size: 2rem; font-weight: bold;';
-      labelDiv.appendChild(cityLabel);
-
-      // Add "Prev Day" indicator if needed
-      if (city.prevDay) {
-        const prevDayLabel = document.createElement('div');
-        prevDayLabel.textContent = 'Prev Day';
-        prevDayLabel.style.cssText = 'color: #ff0; font-size: 1rem; margin-top: -2px; line-height: 1;';
-        labelDiv.appendChild(prevDayLabel);
-      }
-
-      const timeSpan = document.createElement('span');
-      timeSpan.textContent = city.time || '--:--';
-      timeSpan.style.cssText = 'color: #0f0; font-size: 2.6rem; font-weight: bold; letter-spacing: 2px;';
-
-      cityDiv.appendChild(labelDiv);
-      cityDiv.appendChild(timeSpan);
-      remoteContainer.appendChild(cityDiv);
-    });
+  // Render appropriate mode
+  if (isLandscape) {
+    renderLandscape(data);
+  } else {
+    renderPortrait(data);
   }
 }
 

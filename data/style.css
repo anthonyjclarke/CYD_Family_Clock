@@ -63,83 +63,22 @@ main {
   margin-bottom: 10px;
 }
 
-/* Display Mirror */
-.display-mirror {
+/* Canvas Display Mirror */
+#canvasContainer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
   background: #000;
+  padding: 10px;
+  border-radius: 5px;
   border: 2px solid #00d9ff;
 }
 
-.clock-display {
-  font-family: 'Courier New', monospace;
-}
-
-.clock-header {
-  text-align: center;
-  padding: 25px 0;
-  border-bottom: 1px solid #333;
-}
-
-.clock-title {
-  color: #00d9ff;
-  font-size: 2.6rem;
-  font-weight: bold;
-  letter-spacing: 2px;
-  margin-bottom: 8px;
-}
-
-.clock-date {
-  color: #0f0;
-  font-size: 2rem;
-  letter-spacing: 1px;
-}
-
-.clock-cities {
-  padding: 10px 0;
-}
-
-.clock-city {
-  display: flex;
-  justify-content: flex-start;
-  align-items: flex-start;
-  padding: 18px 20px;
-  border-bottom: 1px solid #222;
-  gap: 20px;
-}
-
-.clock-city:last-child {
-  border-bottom: none;
-}
-
-.clock-city-info {
-  flex: 1;
-}
-
-.clock-city-label {
-  color: #fff;
-  font-size: 2.6rem;
-  font-weight: bold;
-  margin-bottom: 4px;
-}
-
-.clock-city-home {
-  color: #00d9ff;
-  font-size: 2.6rem;
-  font-weight: normal;
-}
-
-.clock-city-prev {
-  color: #ff0;
-  font-size: 2.6rem;
-  font-weight: normal;
-}
-
-.clock-city-time {
-  color: #0f0;
-  font-size: 2.6rem;
-  font-weight: bold;
-  letter-spacing: 2px;
-  min-width: 120px;
-  text-align: right;
+#displayCanvas {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  background: #000;
+  display: block;
 }
 
 /* Status Grid */
@@ -318,39 +257,8 @@ footer a:hover svg {
     grid-template-columns: 1fr;
   }
 
-  /* Clock display - mobile sizes (override inline styles) */
-  #clockDate {
-    font-size: 1.2rem !important;
-  }
-
-  #homeCity {
-    font-size: 1.2rem !important;
-  }
-
-  #homeTime {
-    font-size: 1.6rem !important;
-  }
-
-  #clockHome small {
-    font-size: 0.7rem !important;
-  }
-
-  #clockRemote > div {
-    padding: 8px 0 !important;
-  }
-
-  /* Remote city labels - target span inside labelDiv */
-  #clockRemote > div > div > span {
-    font-size: 1.2rem !important;
-  }
-
-  /* Remote time - direct child span of cityDiv */
-  #clockRemote > div > span {
-    font-size: 1.6rem !important;
-  }
-
-  /* PREV DAY indicator */
-  #clockRemote > div > div > div {
-    font-size: 0.7rem !important;
+  /* Canvas at 1:1 scale on mobile (handled in JS) */
+  #canvasContainer {
+    padding: 5px;
   }
 }
