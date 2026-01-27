@@ -157,7 +157,7 @@ bool showingDiagnostics = false;
 unsigned long diagnosticsStartTime = 0;
 const unsigned long DIAGNOSTICS_TIMEOUT = 15000; // 15 seconds
 
-#define FIRMWARE_VERSION "2.4.0"
+#define FIRMWARE_VERSION "2.5.0"
 #define OTA_HOSTNAME "WorldClock"
 #define OTA_PASSWORD "change-me"  // TODO: Change this!
 
@@ -526,7 +526,7 @@ const int kLandscapeRemoteRowHeight = 48;  // 240 / 5 = 48px per remote city
 
 // Analog clock settings (landscape mode left panel)
 const int kClockCenterX = 60;          // Center of left panel (120/2)
-const int kClockCenterY = 95;          // Vertical center for clock
+const int kClockCenterY = 120;         // Centered between date (y~60) and digital time (y=185)
 const int kClockRadius = 50;           // Clock face radius
 const int kHourHandLen = 25;           // Hour hand length
 const int kMinuteHandLen = 35;         // Minute hand length
@@ -554,6 +554,7 @@ void takeScreenshotRaw();
 char lastDate[16];
 char lastTimes[6][8];  // 6 cities: home + 5 remote, "HH:MM" format
 bool lastPrevDay[6];
+bool lastNextDay[6];
 bool lastColonState[6];
 int timePadWidth = 0;
 unsigned long lastDebugPrint = 0;
@@ -762,6 +763,7 @@ void formatDate(char *outBuf, size_t bufSize) {
 struct TimeInfo {
   char timeStr[8];  // "HH:MM" + null terminator - fixed size to avoid heap allocation
   bool prevDay;
+  bool nextDay;
   bool showColon;
 };
 
@@ -772,6 +774,7 @@ struct CachedTimeInfo {
   struct tm tm;
   char timeStr[8];
   bool prevDay;
+  bool nextDay;
 };
 
 static CachedTimeInfo timeCache[6];  // Cache for all 6 cities (home + 5 remote)
@@ -783,11 +786,12 @@ static bool timeCacheInitialized = false;
 void updateAllCityTimes() {
   time_t now = time(nullptr);
 
-  // Get home city time first (needed for prevDay comparison)
+  // Get home city time first (needed for prevDay/nextDay comparison)
   getLocalTimeNoSetenv(now, &parsedTz[0], &timeCache[0].tm);
   snprintf(timeCache[0].timeStr, sizeof(timeCache[0].timeStr),
            "%02d:%02d", timeCache[0].tm.tm_hour, timeCache[0].tm.tm_min);
   timeCache[0].prevDay = false;  // Home is never "previous day" relative to itself
+  timeCache[0].nextDay = false;  // Home is never "next day" relative to itself
 
   // Update remote cities
   for (int i = 0; i < 5; i++) {
@@ -797,11 +801,19 @@ void updateAllCityTimes() {
 
     // Check if remote city is in previous day relative to home
     timeCache[i + 1].prevDay = false;
+    timeCache[i + 1].nextDay = false;
     if (timeCache[i + 1].tm.tm_year < timeCache[0].tm.tm_year) {
       timeCache[i + 1].prevDay = true;
     } else if (timeCache[i + 1].tm.tm_year == timeCache[0].tm.tm_year &&
                timeCache[i + 1].tm.tm_yday < timeCache[0].tm.tm_yday) {
       timeCache[i + 1].prevDay = true;
+    }
+    // Check if remote city is in next day relative to home
+    if (timeCache[i + 1].tm.tm_year > timeCache[0].tm.tm_year) {
+      timeCache[i + 1].nextDay = true;
+    } else if (timeCache[i + 1].tm.tm_year == timeCache[0].tm.tm_year &&
+               timeCache[i + 1].tm.tm_yday > timeCache[0].tm.tm_yday) {
+      timeCache[i + 1].nextDay = true;
     }
   }
 
@@ -826,6 +838,7 @@ TimeInfo formatTime(int cityIndex) {
   // Use cached values
   strcpy(info.timeStr, timeCache[cityIndex].timeStr);
   info.prevDay = timeCache[cityIndex].prevDay;
+  info.nextDay = timeCache[cityIndex].nextDay;
   info.showColon = (now % 2 == 0);  // Blink every second
 
   return info;
@@ -868,46 +881,51 @@ void drawStaticLayoutPortrait() {
 }
 
 // Draw static layout for landscape mode (320x240)
-// Left panel (120px): Title, date, analog clock, city name, HOME, digital time
+// Left panel (120px): City name, HOME, date, analog clock, digital time
 // Right panel (200px): 5 remote cities stacked vertically with times
 void drawStaticLayoutLandscape() {
-  // LEFT PANEL: Title (single line, centered)
-  tft.setTextColor(COLOR_LABEL, COLOR_BG);
-  setFont(kFontHeader, kFallbackHeader);
-  tft.setTextDatum(TC_DATUM);
-  tft.drawString("WORLD CLOCK", kLeftPanelWidth / 2, 4);
+  // LEFT PANEL layout: City (y=6) → HOME (y=30) → Date (y=48) → Clock (y=120) → Time (y=185)
 
-  // Date will be drawn by drawHeaderDate()
-
-  // Draw analog clock face
-  drawAnalogClockFace();
-
-  // Home city label (centered below clock)
-  int homeCityY = 155;
-  setFont(kFontLabel, kFallbackLabel);
+  // Home city label (at top) - use smaller font for long names (>9 chars)
+  int cityLen = strlen(config.homeCityLabel);
+  if (cityLen > 9) {
+    setFont(kFontNote, kFallbackNote);  // Smaller font for long names
+  } else {
+    setFont(kFontLabel, kFallbackLabel);
+  }
   tft.setTextDatum(TC_DATUM);
   tft.setTextColor(COLOR_LABEL, COLOR_BG);
-  tft.drawString(config.homeCityLabel, kLeftPanelWidth / 2, homeCityY);
+  tft.drawString(config.homeCityLabel, kLeftPanelWidth / 2, 6);
 
-  // "HOME" indicator below city
-  int homeIndicatorY = 175;
+  // "HOME" indicator below city name
   setFont(kFontNote, kFallbackNote);
   tft.setTextColor(TFT_CYAN, COLOR_BG);
   tft.setTextDatum(TC_DATUM);
-  tft.drawString("HOME", kLeftPanelWidth / 2, homeIndicatorY);
+  tft.drawString("HOME", kLeftPanelWidth / 2, 30);
 
-  // Digital time will be drawn by drawTimesLandscape() at Y=195
+  // Date will be drawn by drawHeaderDate() at y=48
+
+  // Draw analog clock face (centered at y=120)
+  drawAnalogClockFace();
+
+  // Digital time will be drawn by drawTimesLandscape() at Y=185
 
   // Divider line between left and right panels
   tft.drawFastVLine(kLeftPanelWidth - 1, 0, tft.height(), TFT_DARKGREY);
 
   // RIGHT PANEL: 5 Remote Cities (no horizontal lines)
-  setFont(kFontLabel, kFallbackLabel);
   tft.setTextColor(COLOR_LABEL, COLOR_BG);
   tft.setTextDatum(TL_DATUM);
 
   for (int i = 0; i < 5; i++) {
     int rowY = i * kLandscapeRemoteRowHeight + 2;  // City at top of row
+    // Use smaller font for long city names (>9 chars)
+    int remoteCityLen = strlen(config.remoteCities[i]);
+    if (remoteCityLen > 9) {
+      setFont(kFontNote, kFallbackNote);
+    } else {
+      setFont(kFontLabel, kFallbackLabel);
+    }
     tft.drawString(config.remoteCities[i], kLeftPanelWidth + kPad, rowY);
   }
 }
@@ -929,10 +947,10 @@ void drawHeaderDate(const char *dateStr) {
   tft.setTextColor(COLOR_TIME, COLOR_BG);
 
   if (config.landscapeMode) {
-    // Landscape: date in left panel, below single-line title
+    // Landscape: date in left panel, below HOME indicator (y=48)
     tft.setTextDatum(TC_DATUM);
-    tft.fillRect(0, 18, kLeftPanelWidth - 2, 18, COLOR_BG);  // Clear date area
-    tft.drawString(dateStr, kLeftPanelWidth / 2, 20);
+    tft.fillRect(0, 46, kLeftPanelWidth - 2, 18, COLOR_BG);  // Clear date area
+    tft.drawString(dateStr, kLeftPanelWidth / 2, 48);
   } else {
     // Portrait: centered date below title (full width)
     tft.setTextDatum(MC_DATUM);
@@ -965,42 +983,32 @@ void drawTimesPortrait() {
     TimeInfo info = formatTime(i);
     bool timeChanged = (strcmp(info.timeStr, lastTimes[i]) != 0);
     bool prevDayChanged = (info.prevDay != lastPrevDay[i]);
+    bool nextDayChanged = (info.nextDay != lastNextDay[i]);
     bool colonChanged = (info.showColon != lastColonState[i]);
-    if (!timeChanged && !prevDayChanged && !colonChanged) {
+    if (!timeChanged && !prevDayChanged && !nextDayChanged && !colonChanged) {
       continue;
     }
 
     int rowTop = kHeaderHeight + i * rowHeight;
     int timeY = rowTop + 2;
 
-    if (timeChanged || prevDayChanged) {
+    if (timeChanged || prevDayChanged || nextDayChanged || colonChanged) {
       setFont(kFontTime, kFallbackTime);
       int timeWidth = tft.textWidth("88:88");
       int clearX = (tft.width() - kPad) - timeWidth - 2;
-      tft.fillRect(clearX, rowTop, tft.width() - clearX, rowHeight, COLOR_BG);
+      tft.fillRect(clearX, timeY, timeWidth + 4, tft.fontHeight(), COLOR_BG);
       tft.setTextDatum(TR_DATUM);
-      tft.drawString(info.timeStr, tft.width() - kPad, timeY);
-    }
 
-    if (colonChanged && !timeChanged) {
-      // Colon blink only - clear colon area and redraw
-      setFont(kFontTime, kFallbackTime);
-      int widthMin = tft.textWidth("00");
-      int widthColon = tft.textWidth(":");
-      int colonX = (tft.width() - kPad) - widthMin - widthColon;
-      // Clear colon area
-      tft.fillRect(colonX, timeY, widthColon, tft.fontHeight(), COLOR_BG);
-      tft.setTextPadding(0);
-      tft.setTextDatum(TL_DATUM);
-      if (info.showColon) {
-        tft.setTextColor(COLOR_TIME, COLOR_BG);
-        tft.drawString(":", colonX, timeY);
+      // Build time string with colon or space for blinking
+      char displayTime[8];
+      strcpy(displayTime, info.timeStr);
+      if (!info.showColon) {
+        displayTime[2] = ' ';  // Replace colon with space
       }
-      tft.setTextDatum(TR_DATUM);
-      tft.setTextColor(COLOR_TIME, COLOR_BG);
+      tft.drawString(displayTime, tft.width() - kPad, timeY);
     }
 
-    if (prevDayChanged) {
+    if (prevDayChanged || nextDayChanged) {
       int labelClearWidth = tft.width() / 2 - kPad - 4;
       tft.fillRect(kPad, rowTop, labelClearWidth, rowHeight, COLOR_BG);
       setFont(kFontLabel, kFallbackLabel);
@@ -1011,6 +1019,10 @@ void drawTimesPortrait() {
         setFont(kFontNote, kFallbackNote);
         tft.setTextColor(TFT_YELLOW, COLOR_BG);
         tft.drawString("Prev Day", kPad, rowTop + 2 + tft.fontHeight() + 2);
+      } else if (info.nextDay) {
+        setFont(kFontNote, kFallbackNote);
+        tft.setTextColor(TFT_CYAN, COLOR_BG);
+        tft.drawString("Next Day", kPad, rowTop + 2 + tft.fontHeight() + 2);
       }
     }
 
@@ -1019,6 +1031,7 @@ void drawTimesPortrait() {
     tft.setTextDatum(TR_DATUM);
     strlcpy(lastTimes[i], info.timeStr, sizeof(lastTimes[i]));
     lastPrevDay[i] = info.prevDay;
+    lastNextDay[i] = info.nextDay;
     lastColonState[i] = info.showColon;
   }
 }
@@ -1040,66 +1053,55 @@ void drawTimesLandscape() {
   // Update analog clock hands (every second)
   updateAnalogClockHands(homeTm.tm_hour, homeTm.tm_min, homeTm.tm_sec);
 
-  // HOME CITY DIGITAL TIME (left panel, below HOME indicator)
+  // HOME CITY DIGITAL TIME (left panel, below analog clock)
   {
     TimeInfo info = formatTime(0);
     bool timeChanged = (strcmp(info.timeStr, lastTimes[0]) != 0);
     bool colonChanged = (info.showColon != lastColonState[0]);
 
     if (timeChanged || colonChanged) {
-      int homeTimeY = 195;  // Below HOME indicator (Y=175)
+      int homeTimeY = 185;  // Below analog clock (center Y=120, radius=50)
 
-      if (timeChanged) {
-        setFont(kFontTime, kFallbackTime);
-        tft.setTextColor(COLOR_TIME, COLOR_BG);
-        tft.setTextDatum(TC_DATUM);
-        // Clear home time area
-        tft.fillRect(kPad, homeTimeY, kLeftPanelWidth - kPad * 2 - 2, 30, COLOR_BG);
-        tft.drawString(info.timeStr, kLeftPanelWidth / 2, homeTimeY);
-      }
+      setFont(kFontTime, kFallbackTime);
+      tft.setTextColor(COLOR_TIME, COLOR_BG);
+      tft.setTextDatum(TC_DATUM);
+      // Clear home time area
+      tft.fillRect(kPad, homeTimeY, kLeftPanelWidth - kPad * 2 - 2, 30, COLOR_BG);
 
-      if (colonChanged && !timeChanged) {
-        // Colon blink only - clear colon area and redraw
-        setFont(kFontTime, kFallbackTime);
-        int widthHour = tft.textWidth("00");
-        int widthColon = tft.textWidth(":");
-        int colonX = kLeftPanelWidth / 2 - tft.textWidth("88:88") / 2 + widthHour;
-        // Clear colon area
-        tft.fillRect(colonX, homeTimeY, widthColon, tft.fontHeight(), COLOR_BG);
-        tft.setTextPadding(0);
-        tft.setTextDatum(TL_DATUM);
-        if (info.showColon) {
-          tft.setTextColor(COLOR_TIME, COLOR_BG);
-          tft.drawString(":", colonX, homeTimeY);
-        }
-        tft.setTextColor(COLOR_TIME, COLOR_BG);
+      // Build time string with colon or space for blinking
+      char displayTime[8];
+      strcpy(displayTime, info.timeStr);
+      if (!info.showColon) {
+        displayTime[2] = ' ';  // Replace colon with space
       }
+      tft.drawString(displayTime, kLeftPanelWidth / 2, homeTimeY);
 
       strlcpy(lastTimes[0], info.timeStr, sizeof(lastTimes[0]));
       lastPrevDay[0] = info.prevDay;
+      lastNextDay[0] = info.nextDay;
       lastColonState[0] = info.showColon;
     }
   }
 
   // REMOTE CITIES TIMES (right panel - 200px wide)
-  // Layout: City label at top, Time below (right-aligned), PREV DAY at bottom
+  // Layout: City label at top, Time below (right-aligned), PREV/NEXT DAY at bottom
   for (int i = 0; i < 5; i++) {
     int cityIndex = i + 1;
     TimeInfo info = formatTime(cityIndex);
     bool timeChanged = (strcmp(info.timeStr, lastTimes[cityIndex]) != 0);
     bool prevDayChanged = (info.prevDay != lastPrevDay[cityIndex]);
+    bool nextDayChanged = (info.nextDay != lastNextDay[cityIndex]);
     bool colonChanged = (info.showColon != lastColonState[cityIndex]);
 
-    if (!timeChanged && !prevDayChanged && !colonChanged) {
+    if (!timeChanged && !prevDayChanged && !nextDayChanged && !colonChanged) {
       continue;
     }
 
     int rowY = i * kLandscapeRemoteRowHeight;
     int cityLabelY = rowY + 2;     // City label at top
-    int prevDayY = rowY + 20;      // PREV DAY under city (moved down 3px)
     int timeY = rowY + 20;         // Time right-aligned
 
-    if (timeChanged || prevDayChanged) {
+    if (timeChanged || prevDayChanged || nextDayChanged) {
       // Clear the entire row area for this city (except divider line)
       tft.fillRect(kLeftPanelWidth + 1, rowY, kRightPanelWidth - 1, kLandscapeRemoteRowHeight, COLOR_BG);
 
@@ -1109,40 +1111,40 @@ void drawTimesLandscape() {
       tft.setTextDatum(TL_DATUM);
       tft.drawString(config.remoteCities[i], kLeftPanelWidth + kPad, cityLabelY);
 
-      // Draw PREV DAY indicator (same style as portrait mode)
+      // Draw PREV DAY or NEXT DAY indicator
       if (info.prevDay) {
-        setFont(kFontNote, kFallbackNote);  // Same smooth font as portrait
+        setFont(kFontNote, kFallbackNote);
         tft.setTextColor(TFT_YELLOW, COLOR_BG);
         tft.setTextDatum(TL_DATUM);
         tft.drawString("PREV DAY", kLeftPanelWidth + kPad, cityLabelY + tft.fontHeight() + 2);
+      } else if (info.nextDay) {
+        setFont(kFontNote, kFallbackNote);
+        tft.setTextColor(TFT_CYAN, COLOR_BG);
+        tft.setTextDatum(TL_DATUM);
+        tft.drawString("NEXT DAY", kLeftPanelWidth + kPad, cityLabelY + tft.fontHeight() + 2);
       }
-
-      // Draw time right-aligned
-      setFont(kFontTime, kFallbackTime);
-      tft.setTextColor(COLOR_TIME, COLOR_BG);
-      tft.setTextDatum(TR_DATUM);
-      tft.drawString(info.timeStr, tft.width() - 6, timeY);
     }
 
-    if (colonChanged && !timeChanged) {
-      // Colon blink only - clear colon area and redraw
+    if (timeChanged || colonChanged) {
+      // Draw time right-aligned (with colon or space for blinking)
       setFont(kFontTime, kFallbackTime);
-      int widthMin = tft.textWidth("00");
-      int widthColon = tft.textWidth(":");
-      int colonX = (tft.width() - 6) - widthMin - widthColon;
-      // Clear colon area
-      tft.fillRect(colonX, timeY, widthColon, tft.fontHeight(), COLOR_BG);
-      tft.setTextPadding(0);
-      tft.setTextDatum(TL_DATUM);
-      if (info.showColon) {
-        tft.setTextColor(COLOR_TIME, COLOR_BG);
-        tft.drawString(":", colonX, timeY);
-      }
+      int timeWidth = tft.textWidth("88:88");
+      tft.fillRect(tft.width() - 6 - timeWidth - 2, timeY, timeWidth + 4, tft.fontHeight(), COLOR_BG);
       tft.setTextColor(COLOR_TIME, COLOR_BG);
+      tft.setTextDatum(TR_DATUM);
+
+      // Build time string with colon or space for blinking
+      char displayTime[8];
+      strcpy(displayTime, info.timeStr);
+      if (!info.showColon) {
+        displayTime[2] = ' ';  // Replace colon with space
+      }
+      tft.drawString(displayTime, tft.width() - 6, timeY);
     }
 
     strlcpy(lastTimes[cityIndex], info.timeStr, sizeof(lastTimes[cityIndex]));
     lastPrevDay[cityIndex] = info.prevDay;
+    lastNextDay[cityIndex] = info.nextDay;
     lastColonState[cityIndex] = info.showColon;
   }
 }
@@ -1496,12 +1498,15 @@ void handlePostConfig() {
   for (int i = 0; i < 6; i++) {
     lastTimes[i][0] = '\0';
     lastPrevDay[i] = false;
+    lastNextDay[i] = false;
     lastColonState[i] = false;
   }
   // Reset analog clock state
   lastSecond = -1;
   lastMinute = -1;
   lastHour = -1;
+  // Force immediate recalculation of time cache (including prevDay/nextDay)
+  lastBatchUpdate = 0;
 
   server.send(200, "application/json", "{\"ok\":true}");
   DBG_INFO("Config updated and reloaded\n");
@@ -1525,12 +1530,113 @@ void handleReboot() {
   ESP.restart();
 }
 
-// GET /api/screenshot - Trigger screenshot capture
+// GET /api/screenshot - Trigger screenshot capture (serial output)
 void handleScreenshot() {
   DBG_INFO("GET /api/screenshot\n");
   server.send(200, "text/plain", "Screenshot will be sent via serial. Monitor serial output.");
   delay(500);  // Give web response time to send
   takeScreenshot();
+}
+
+// GET /api/snapshot - Stream BMP image of current display
+// Streams directly to client to avoid memory issues
+void handleSnapshot() {
+  DBG_INFO("GET /api/snapshot - Capturing display as BMP\n");
+
+  // Wait for colons to be visible (even second = colon shown)
+  // Maximum wait of 1.1 seconds to ensure we catch the next even second
+  time_t startWait = time(nullptr);
+  while ((time(nullptr) % 2) != 0) {
+    delay(100);
+    if (time(nullptr) - startWait > 2) break;  // Safety timeout
+  }
+  // Small additional delay to ensure display has updated
+  delay(100);
+
+  int width = tft.width();
+  int height = tft.height();
+
+  // BMP row padding (rows must be multiple of 4 bytes)
+  int rowSize = ((width * 3 + 3) / 4) * 4;
+  int imageSize = rowSize * height;
+  int fileSize = 54 + imageSize;  // 54-byte header + pixel data
+
+  // BMP Header (14 bytes) + DIB Header (40 bytes) = 54 bytes
+  uint8_t header[54] = {0};
+
+  // BMP File Header (14 bytes)
+  header[0] = 'B';
+  header[1] = 'M';
+  header[2] = fileSize & 0xFF;
+  header[3] = (fileSize >> 8) & 0xFF;
+  header[4] = (fileSize >> 16) & 0xFF;
+  header[5] = (fileSize >> 24) & 0xFF;
+  header[10] = 54;  // Pixel data offset
+
+  // DIB Header (BITMAPINFOHEADER - 40 bytes)
+  header[14] = 40;  // DIB header size
+  header[18] = width & 0xFF;
+  header[19] = (width >> 8) & 0xFF;
+  header[22] = height & 0xFF;
+  header[23] = (height >> 8) & 0xFF;
+  header[26] = 1;   // Color planes
+  header[28] = 24;  // Bits per pixel (RGB888)
+  header[34] = imageSize & 0xFF;
+  header[35] = (imageSize >> 8) & 0xFF;
+  header[36] = (imageSize >> 16) & 0xFF;
+  header[37] = (imageSize >> 24) & 0xFF;
+
+  // Send HTTP headers
+  server.sendHeader("Content-Type", "image/bmp");
+  server.sendHeader("Content-Disposition", "attachment; filename=\"clock_snapshot.bmp\"");
+  server.sendHeader("Content-Length", String(fileSize));
+  server.sendHeader("Cache-Control", "no-cache");
+
+  // Use chunked transfer
+  WiFiClient client = server.client();
+  client.write("HTTP/1.1 200 OK\r\n");
+  client.write("Content-Type: image/bmp\r\n");
+  client.write("Content-Disposition: attachment; filename=\"clock_snapshot.bmp\"\r\n");
+  client.printf("Content-Length: %d\r\n", fileSize);
+  client.write("Connection: close\r\n\r\n");
+
+  // Send BMP header
+  client.write(header, 54);
+
+  // Allocate row buffer (width * 3 bytes for RGB + padding)
+  uint8_t* rowBuf = (uint8_t*)malloc(rowSize);
+  if (!rowBuf) {
+    DBG_ERROR("Failed to allocate row buffer for snapshot\n");
+    return;
+  }
+
+  // BMP is bottom-up, so read from bottom row to top
+  for (int y = height - 1; y >= 0; y--) {
+    int bufIdx = 0;
+    for (int x = 0; x < width; x++) {
+      uint16_t color565 = tft.readPixel(x, y);
+
+      // Convert RGB565 to BGR888 (BMP uses BGR order)
+      uint8_t r = ((color565 >> 11) & 0x1F) << 3;
+      uint8_t g = ((color565 >> 5) & 0x3F) << 2;
+      uint8_t b = (color565 & 0x1F) << 3;
+
+      rowBuf[bufIdx++] = b;  // Blue
+      rowBuf[bufIdx++] = g;  // Green
+      rowBuf[bufIdx++] = r;  // Red
+    }
+
+    // Pad row to multiple of 4 bytes
+    while (bufIdx < rowSize) {
+      rowBuf[bufIdx++] = 0;
+    }
+
+    client.write(rowBuf, rowSize);
+    yield();  // Allow WiFi stack to process
+  }
+
+  free(rowBuf);
+  DBG_INFO("Snapshot complete: %dx%d, %d bytes\n", width, height, fileSize);
 }
 
 // GET /api/mirror - Return current clock state as JSON
@@ -1545,15 +1651,33 @@ void handleMirror() {
   struct tm homeTm;
   getLocalTimeNoSetenv(now, &parsedTz[0], &homeTm);
 
-  // Date from home city
+  // Display mode
+  doc["landscapeMode"] = config.landscapeMode;
+
+  // Date from home city (uppercase for display)
   char dateStr[32];
   strftime(dateStr, sizeof(dateStr), "%a %d %b", &homeTm);
+  // Convert to uppercase to match TFT display
+  for (int i = 0; dateStr[i]; i++) {
+    dateStr[i] = toupper(dateStr[i]);
+  }
   doc["date"] = dateStr;
+
+  // Clock angles for analog clock (landscape mode)
+  // Hour: 30° per hour + 0.5° per minute (smooth movement)
+  // Minute: 6° per minute
+  // Second: 6° per second
+  JsonObject clock = doc["clock"].to<JsonObject>();
+  clock["hour"] = homeTm.tm_hour;
+  clock["minute"] = homeTm.tm_min;
+  clock["second"] = homeTm.tm_sec;
 
   // Home city
   JsonObject homeCity = doc["home"].to<JsonObject>();
   homeCity["label"] = config.homeCityLabel;
   homeCity["time"] = lastTimes[0];
+  homeCity["prevDay"] = lastPrevDay[0];
+  homeCity["nextDay"] = lastNextDay[0];
 
   // Remote cities
   JsonArray remoteCities = doc["remote"].to<JsonArray>();
@@ -1562,6 +1686,7 @@ void handleMirror() {
     city["label"] = config.remoteCities[i];
     city["time"] = lastTimes[i + 1];
     city["prevDay"] = lastPrevDay[i + 1];
+    city["nextDay"] = lastNextDay[i + 1];
   }
 
   String output;
@@ -1633,6 +1758,7 @@ void setupWebServer() {
   server.on("/api/state", HTTP_GET, handleGetState);
   server.on("/api/timezones", HTTP_GET, handleGetTimezones);
   server.on("/api/screenshot", HTTP_GET, handleScreenshot);
+  server.on("/api/snapshot", HTTP_GET, handleSnapshot);
   server.on("/api/mirror", HTTP_GET, handleMirror);
   server.on("/api/debug", HTTP_GET, handleDebug);
 

@@ -13,23 +13,16 @@
   </header>
 
   <main>
-    <!-- Live Clock Display -->
+    <!-- Live Clock Display - Canvas Mirror -->
     <section class="card">
-      <h2>World Clock</h2>
-      <div id="clockDisplay" style="font-family: monospace; background: #1a1a1a; padding: 15px; border-radius: 5px; max-width: 600px; margin: 0 auto;">
-        <div id="clockDate" style="text-align: center; color: #00d9ff; font-size: 2rem; margin-bottom: 12px; font-weight: bold;">--</div>
-        <div id="clockHome" style="margin-bottom: 8px; padding-bottom: 8px; border-bottom: 2px solid #444;">
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <span id="homeCity" style="color: #fff; font-size: 2rem; font-weight: bold;">--</span>
-            <span id="homeTime" style="color: #0f0; font-size: 2.6rem; font-weight: bold; letter-spacing: 2px;">--:--</span>
-          </div>
-          <small style="color: #00d9ff; font-size: 1rem; margin-top: -2px; line-height: 1; display: block;">Home</small>
-        </div>
-        <div id="clockRemote">
-          <!-- Remote cities will be populated by JavaScript -->
-        </div>
+      <h2>Display Mirror</h2>
+      <div id="canvasContainer">
+        <canvas id="displayCanvas" width="240" height="320"></canvas>
       </div>
-      <small style="display: block; margin-top: 8px; color: #888; text-align: center;">Live from CYD (updates every 2 sec)</small>
+      <div style="display: flex; justify-content: center; align-items: center; gap: 15px; margin-top: 12px;">
+        <small style="color: #888;">Pixel-accurate mirror of TFT display (updates every 2 sec)</small>
+        <button type="button" class="btn-secondary" id="snapshotBtn" style="padding: 6px 12px; font-size: 0.85rem;">Capture Screenshot</button>
+      </div>
     </section>
 
     <!-- Timezone Configuration -->

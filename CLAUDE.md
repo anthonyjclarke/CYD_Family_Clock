@@ -116,7 +116,7 @@ Remote Cities:
 ### Network Settings (line 160)
 
 ```cpp
-FIRMWARE_VERSION = "2.4.0"
+FIRMWARE_VERSION = "2.5.0"
 OTA_HOSTNAME = "WorldClock"
 OTA_PASSWORD = "change-me"  // ⚠️ CHANGE IN PRODUCTION
 NTP_SERVER1 = "pool.ntp.org"
@@ -156,7 +156,7 @@ kFontTime = "NotoSans-Bold16" (fallback: 6)
 kFontNote = "NotoSans-Bold7" (fallback: 2)
 ```
 
-## Current State (v2.4.0)
+## Current State (v2.5.0)
 
 ### Features
 
@@ -164,6 +164,7 @@ kFontNote = "NotoSans-Bold7" (fallback: 2)
 - **Dual Display Modes**: Portrait (240x320) or Landscape (320x240) with analogue clock
 - **Analogue Clock**: Real-time clock face with hour, minute, and second hands
 - **Web Configuration**: Full WebUI at `http://<device-ip>` with live clock mirror
+- **Screenshot Capture**: Download true TFT pixels as BMP via WebUI button
 - **Display Mode Toggle**: Switch between portrait/landscape via WebUI
 - **Persistent Config**: NVS storage, survives reboots (including display mode)
 - **Custom Timezones**: Manual POSIX string entry for unlisted cities
@@ -176,6 +177,7 @@ kFontNote = "NotoSans-Bold7" (fallback: 2)
 - **State Caching**: Flicker-free selective redraws
 - **Home Indicator**: Cyan "Home" label under reference city
 - **Prev Day Indicator**: Yellow "PREV DAY" for cities in previous day
+- **Next Day Indicator**: Cyan "NEXT DAY" for cities ahead of home city
 - **LDR Support**: Ambient light sensing (for future brightness control)
 
 ### Display Layout - Portrait Mode (240x320)
@@ -206,18 +208,18 @@ kFontNote = "NotoSans-Bold7" (fallback: 2)
 
 ```txt
 ┌────────────┬────────────────────────────┐
-│WORLD CLOCK │ VANCOUVER        20:23    │
-│TUE 28 JAN  │   PREV DAY                │
-├────────────┼────────────────────────────┤
-│    ╭───╮   │ LONDON           04:23    │
-│   /  |  \  │                           │
-│  │   •───│ │ NAIROBI          07:23    │
-│   \     /  │                           │
-│    ╰───╯   │ DENVER           21:23    │
-│            │   PREV DAY                │
-│  SYDNEY    ├────────────────────────────┤
-│   HOME     │ TOKYO            13:23    │
-│   14:23    │                           │
+│WORLD CLOCK │ VANCOUVER        20:23     │
+│TUE 28 JAN  │   PREV DAY                 │
+│            │                            │
+│    ╭───╮   │ LONDON           04:23     │
+│   /  |  \  │                            │
+│  │   •───│ │ NAIROBI          07:23     │
+│   \     /  │                            │
+│    ╰───╯   │ DENVER           21:23     │
+│            │   PREV DAY                 │
+│  SYDNEY    │                            │ 
+│   HOME     │ TOKYO            13:23     │
+│   14:23    │                            │
 └────────────┴────────────────────────────┘
  Left Panel     Right Panel (5 remote cities)
   (120px)              (200px)
@@ -235,6 +237,7 @@ kFontNote = "NotoSans-Bold7" (fallback: 2)
 ### WebUI Features
 
 - **Live Clock Display**: Real-time mirror of all city times (updates every 2 seconds)
+- **Screenshot Capture**: "Capture Screenshot" button downloads true TFT pixels as BMP
 - **Display Mode Toggle**: Switch between portrait and landscape modes
 - **Timezone Dropdowns**: 102 predefined cities grouped by region
 - **Custom Entry**: Manual POSIX timezone string input
@@ -249,6 +252,7 @@ kFontNote = "NotoSans-Bold7" (fallback: 2)
 ```txt
 GET  /api/state       - System status + current config (JSON)
 GET  /api/mirror      - Current clock display data for all cities (JSON)
+GET  /api/snapshot    - Download TFT display as BMP image (waits for colons visible)
 GET  /api/timezones   - List of 102 predefined timezones (JSON)
 POST /api/config      - Update timezone configuration and display mode
 POST /api/debug-level - Change debug level at runtime
@@ -281,6 +285,7 @@ Minimizes TFT writes and prevents flicker:
 char lastDate[16];         // Last drawn date
 char lastTimes[6][8];      // Last drawn time for each city ("HH:MM")
 bool lastPrevDay[6];       // Last "PREV DAY" state
+bool lastNextDay[6];       // Last "NEXT DAY" state
 bool lastColonState[6];    // Last colon blink state
 
 // Analogue clock state (landscape mode)
@@ -292,9 +297,9 @@ int lastHour = -1;         // Last drawn hour hand position
 ### Selective Redraw Logic
 
 - **Date**: Only redraws when string changes (once per day)
-- **Time**: Only redraws when HH:MM changes (once per minute)
-- **Colon**: Targeted 1-char redraw every second (blinking animation)
-- **Prev Day**: Only redraws when day boundary crossed
+- **Time**: Full time string redraw for colon blink (HH:MM or HH MM)
+- **Colon**: Blinks by redrawing full time string with ":" or " " (fixes alignment issues)
+- **Prev/Next Day**: Only redraws when day boundary crossed
 - **Labels**: Only redrawn during `drawStaticLayout()` after config change
 
 ### Timezone Calculation (No Memory Leak)
@@ -469,6 +474,8 @@ void getLocalTimeNoSetenv(time_t utc, const ParsedTimezone* tz, struct tm* out) 
 - ✅ Memory leak - Reduced in v2.2.0, **eliminated in v2.3.0**
 - ✅ Display mirror in WebUI - Added in v2.4.0
 - ✅ Multiple display modes - Portrait/Landscape added in v2.4.0
+- ✅ NEXT DAY indicator - Added in v2.5.0
+- ✅ Screenshot capture via WebUI - Added in v2.5.0
 
 ## Known Limitations
 
@@ -689,12 +696,12 @@ int readLDR() {
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed version history.
 
-**Current Version**: 2.4.0 (2026-01-28)
+**Current Version**: 2.5.0 (2026-01-28)
 
-- **Landscape mode** with analogue clock display
-- **Display mode toggle** via WebUI (portrait/landscape)
-- **Live clock mirror** in WebUI (2-second refresh)
-- **LDR support** for ambient light sensing
-- **Flicker-free clock hands** with selective redraw
-- **Persistent display mode** in NVS storage
+- **NEXT DAY indicator** (cyan) for cities ahead of home city
+- **Screenshot capture** via WebUI - downloads true TFT pixels as BMP
+- **Colon alignment fix** - full time string redraw prevents misalignment
+- **Immediate PREV/NEXT DAY updates** after config changes
+- Landscape mode with analogue clock display
+- Live clock mirror in WebUI (2-second refresh)
 - Eliminated memory leak (v2.3.0) - heap stable indefinitely

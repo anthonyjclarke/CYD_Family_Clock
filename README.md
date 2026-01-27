@@ -1,12 +1,56 @@
+![Version](https://img.shields.io/badge/version-2.5.0-blue)
+![Platform](https://img.shields.io/badge/platform-ESP32-green)
+![Framework](https://img.shields.io/badge/framework-Arduino-orange)
+
 # CYD World Clock
 
 With Family all around the Globe I wanted to not have to open Apps on phone, clocks on computers and have a small little display showing the time at various places around the world, so this was created.
 
 A feature-rich world clock display for the ESP32 CYD (Cheap Yellow Display) featuring a 2.8" ILI9341 TFT screen. Display multiple timezones simultaneously with a beautiful interface, web-based configuration, and OTA updates.
 
-![Version](https://img.shields.io/badge/version-2.4.0-blue)
-![Platform](https://img.shields.io/badge/platform-ESP32-green)
-![Framework](https://img.shields.io/badge/framework-Arduino-orange)
+## Screenshots
+
+### TFT Display
+
+<table>
+<tr>
+<td width="50%">
+
+**Portrait Mode (240x320)**
+
+![TFT Portrait Display](images/TFT_Portrait.jpg)
+
+</td>
+<td width="50%">
+
+**Landscape Mode (320x240)**
+
+![TFT Landscape Display](images/TFT_Landscape.jpg)
+
+</td>
+</tr>
+</table>
+
+### Web Interface
+
+<table>
+<tr>
+<td width="50%">
+
+**Portrait Mode**
+
+![Web Portrait Display](images/Web_Portrait.png)
+
+</td>
+<td width="50%">
+
+**Landscape Mode**
+
+![Web Landscape Display](images/Web_Landscape.png)
+
+</td>
+</tr>
+</table>
 
 ## Features
 
@@ -20,7 +64,8 @@ A feature-rich world clock display for the ESP32 CYD (Cheap Yellow Display) feat
 - **Smooth Fonts**: Optional TFT_eSPI smooth fonts from LittleFS
 - **Visual Indicators**:
   - Blinking colon every second
-  - "PREV DAY" yellow indicator for cities in previous day
+  - "PREV DAY" (yellow) for cities in previous day
+  - "NEXT DAY" (cyan) for cities in next day
   - Color-coded status messages
 - **LDR Support**: Light sensor for ambient brightness detection
 
