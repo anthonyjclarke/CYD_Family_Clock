@@ -5,6 +5,97 @@ All notable changes to the CYD World Clock project will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-01-28
+
+### Added - Landscape Mode with Analogue Clock
+
+#### Dual Display Mode Support
+
+- **Portrait Mode (240x320)**: Original vertical layout with all 6 cities stacked
+- **Landscape Mode (320x240)**: New horizontal layout with analogue clock
+  - Left panel (120px): Title, date, analogue clock, home city name, HOME indicator, digital time
+  - Right panel (200px): 5 remote cities with times and PREV DAY indicators
+- **Persistent Mode Selection**: Display mode saved in NVS, survives reboots
+- **WebUI Toggle**: Switch between modes via dropdown in System Status section
+
+#### Analogue Clock (Landscape Mode)
+
+- **Real-time clock face** with hour markers at 12, 3, 6, 9 positions
+- **Three hands**:
+  - Hour hand (white, thick) - moves smoothly with minutes
+  - Minute hand (white, medium) - updates every minute
+  - Second hand (red, thin) - updates every second
+- **Flicker-free animation**: Selective redraw erases old hand positions before drawing new
+- **Clock dimensions**: 50px radius, centered in left panel at (60, 95)
+
+#### WebUI Live Clock Display
+
+- **Real-time mirror** of all city times in the web interface
+- **2-second polling** for responsive display updates
+- **Visual elements**:
+  - Home city with cyan "Home" indicator
+  - Remote cities with yellow "Prev Day" indicator when applicable
+  - Large monospace font for easy reading
+- **New API endpoint**: `GET /api/mirror` returns current clock display data
+
+#### LDR (Light Dependent Resistor) Support
+
+- **Ambient light sensing** on GPIO34
+- **10-sample averaging** for noise reduction
+- **LDR value displayed** in WebUI System Status section
+- **ADC range**: 0-4095 (12-bit)
+
+### Changed
+
+#### Layout Constants
+
+- Added landscape-specific layout constants:
+  - `kLeftPanelWidth = 120` - Left panel for clock and home city
+  - `kRightPanelWidth = 200` - Right panel for remote cities
+  - `kLandscapeRemoteRowHeight = 48` - Height per remote city row
+- Added analogue clock constants:
+  - `kClockCenterX = 60`, `kClockCenterY = 95` - Clock face center
+  - `kClockRadius = 50` - Clock face radius
+  - Hand lengths: hour (25), minute (35), second (40)
+  - Colors: face (dark grey), markers (white), hands (white/white/red)
+
+#### WebUI Enhancements
+
+- **Polling interval** reduced from 5 seconds to 2 seconds for live clock display
+- **Display mode selector** added to System Status section
+- **LDR value** displayed in status grid
+- **Status hint** updated to indicate touch diagnostics and 5-second refresh
+
+#### API Changes
+
+- `GET /api/state` now includes `landscapeMode` and `ldrValue` fields
+- `POST /api/config` accepts `landscapeMode` boolean to change display orientation
+- New `GET /api/mirror` endpoint for live clock data
+
+### Technical Details
+
+#### New Functions
+
+- `drawAnalogClockFace()` - Draws static clock face with hour markers
+- `updateAnalogClockHands()` - Updates hands with selective erase/redraw
+- `drawClockHand()` - Draws single hand with configurable thickness
+- `drawStaticLayoutLandscape()` - Draws landscape mode static elements
+- `drawTimesLandscape()` - Updates times in landscape mode
+- `readLDR()` - Reads and averages LDR sensor value
+- `applyRotation()` - Sets TFT and touch rotation based on config
+
+#### Analogue Clock State
+
+- `lastSecond`, `lastMinute`, `lastHour` - Track previous hand positions for selective erase
+- State reset on config change, diagnostics exit, and mode switch
+
+#### Memory Impact
+
+- **Flash**: ~1,050KB (increased ~35KB for landscape/clock code)
+- **RAM**: ~54KB (increased ~1KB for clock state variables)
+
+---
+
 ## [2.3.1] - 2026-01-26
 
 ### Added
@@ -379,19 +470,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Upcoming / Planned Features
 
-### v2.1.0 (Planned)
+### v2.5.0 (Planned)
 
 - [ ] WiFi reconnect logic in main loop
 - [ ] Automatic NTP resync every 24 hours
-- [ ] Touch support for city selection
-- [ ] API endpoint for debug level adjustment
-- [ ] Proper ArduinoJson parsing instead of manual string parsing
+- [ ] Automatic brightness control using LDR
+- [ ] Touch-based city selection/editing
 
 ### v3.0.0 (Future)
 
 - [ ] Weather API integration per city
 - [ ] Temperature/humidity display
-- [ ] Multiple display modes (clock only, weather, mixed)
 - [ ] User-configurable color schemes
 - [ ] MQTT support for home automation
 - [ ] Configurable NTP servers via web UI
