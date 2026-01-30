@@ -12,6 +12,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('resetWifiBtn').addEventListener('click', handleResetWiFi);
   document.getElementById('debugLevel').addEventListener('change', handleDebugLevelChange);
   document.getElementById('displayMode').addEventListener('change', handleDisplayModeChange);
+  document.getElementById('flipDisplay').addEventListener('change', handleFlipDisplayChange);
+  document.getElementById('useFahrenheit').addEventListener('change', handleUseFahrenheitChange);
   document.getElementById('snapshotBtn').addEventListener('click', handleSnapshot);
 
   // Timezone dropdown change listeners
@@ -228,7 +230,17 @@ async function updateStatus() {
     document.getElementById('uptime').textContent = formatUptime(data.uptime || 0);
     document.getElementById('freeHeap').textContent = formatBytes(data.freeHeap || 0);
     document.getElementById('ldrValue').textContent = data.ldrValue !== undefined ? data.ldrValue : '--';
+
+    // Sensor data
+    document.getElementById('sensorType').textContent = data.sensorAvailable ? data.sensorType : 'N/A';
+    const tempUnit = data.useFahrenheit ? ' °F' : ' °C';
+    document.getElementById('temperature').textContent = data.sensorAvailable && data.temperature !== undefined ? data.temperature + tempUnit : 'N/A';
+    document.getElementById('humidity').textContent = data.humidity !== undefined ? data.humidity + ' %' : 'N/A';
+    document.getElementById('pressure').textContent = data.pressure !== undefined ? data.pressure + ' hPa' : 'N/A';
+    document.getElementById('useFahrenheit').checked = data.useFahrenheit || false;
+
     document.getElementById('displayMode').value = data.landscapeMode ? 'landscape' : 'portrait';
+    document.getElementById('flipDisplay').checked = data.flipDisplay || false;
     document.getElementById('debugLevel').value = data.debugLevel || 3;
   } catch (error) {
     console.error('Error updating status:', error);
@@ -252,7 +264,17 @@ async function loadState() {
     document.getElementById('uptime').textContent = formatUptime(data.uptime || 0);
     document.getElementById('freeHeap').textContent = formatBytes(data.freeHeap || 0);
     document.getElementById('ldrValue').textContent = data.ldrValue !== undefined ? data.ldrValue : '--';
+
+    // Sensor data
+    document.getElementById('sensorType').textContent = data.sensorAvailable ? data.sensorType : 'N/A';
+    const tempUnit = data.useFahrenheit ? ' °F' : ' °C';
+    document.getElementById('temperature').textContent = data.sensorAvailable && data.temperature !== undefined ? data.temperature + tempUnit : 'N/A';
+    document.getElementById('humidity').textContent = data.humidity !== undefined ? data.humidity + ' %' : 'N/A';
+    document.getElementById('pressure').textContent = data.pressure !== undefined ? data.pressure + ' hPa' : 'N/A';
+    document.getElementById('useFahrenheit').checked = data.useFahrenheit || false;
+
     document.getElementById('displayMode').value = data.landscapeMode ? 'landscape' : 'portrait';
+    document.getElementById('flipDisplay').checked = data.flipDisplay || false;
     document.getElementById('debugLevel').value = data.debugLevel || 3;
 
     // Update form fields (only on explicit load, not during polling)
@@ -455,6 +477,54 @@ async function handleDisplayModeChange(event) {
   }
 }
 
+// Handle flip display change (180° rotation)
+async function handleFlipDisplayChange(event) {
+  const isFlipped = event.target.checked;
+
+  try {
+    const response = await fetch('/api/config', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ flipDisplay: isFlipped })
+    });
+
+    if (!response.ok) throw new Error('Failed to set flip display');
+
+    showNotification(`Display ${isFlipped ? 'flipped' : 'normal'}`, 'success');
+    console.log('Flip display:', isFlipped);
+  } catch (error) {
+    console.error('Error setting flip display:', error);
+    showNotification('Error setting flip display', 'error');
+    loadState(); // Reload to restore actual value
+  }
+}
+
+// Handle temperature unit change (Celsius/Fahrenheit)
+async function handleUseFahrenheitChange(event) {
+  const useFahrenheit = event.target.checked;
+
+  try {
+    const response = await fetch('/api/config', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ useFahrenheit: useFahrenheit })
+    });
+
+    if (!response.ok) throw new Error('Failed to set temperature unit');
+
+    showNotification(`Temperature unit: ${useFahrenheit ? '°F' : '°C'}`, 'success');
+    console.log('Use Fahrenheit:', useFahrenheit);
+  } catch (error) {
+    console.error('Error setting temperature unit:', error);
+    showNotification('Error setting temperature unit', 'error');
+    loadState(); // Reload to restore actual value
+  }
+}
+
 // Helper: Format bytes in human-readable format
 function formatBytes(bytes) {
   if (bytes >= 1024 * 1024) {
@@ -558,7 +628,8 @@ const LAYOUT = {
     hourMarker: '#FFFFFF',
     hourHand: '#FFFFFF',
     minuteHand: '#FFFFFF',
-    secondHand: '#FF0000'
+    secondHand: '#FF0000',
+    envData: '#C0C0C0'  // Light grey for environmental data (TFT_LIGHTGREY)
   },
   // Display scale factor for WebUI (larger screens get scaled up)
   scale: window.innerWidth >= 600 ? 1.5 : 1.0
@@ -789,6 +860,11 @@ function renderLandscape(data) {
     drawText('PREV DAY', L.leftPanelWidth / 2, 210, C.prevDay, 9, 'normal', 'center');
   } else if (data.home?.nextDay) {
     drawText('NEXT DAY', L.leftPanelWidth / 2, 210, C.nextDay, 9, 'normal', 'center');
+  }
+
+  // Environmental data (below digital time at y=218, if sensor available)
+  if (data.sensorAvailable && data.envData) {
+    drawText(data.envData, L.leftPanelWidth / 2, 218, C.envData, 9, 'normal', 'center');
   }
 
   // Vertical separator line

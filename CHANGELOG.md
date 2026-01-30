@@ -5,6 +5,140 @@ All notable changes to the CYD World Clock project will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Planned
+- **Portrait mode environmental data display** - Show sensor readings in portrait orientation
+
+---
+
+## [2.6.1] - 2026-01-30
+
+### Added - Environmental Sensor Support & WebUI Mirror Integration
+
+#### Multi-Sensor Support
+- **I2C sensor support** for environmental monitoring on GPIO 22 (SCL) and GPIO 27 (SDA)
+- **Four sensor types supported**:
+  - **BMP280**: Temperature + Pressure (Bosch)
+  - **BME280**: Temperature + Humidity + Pressure (Bosch)
+  - **SHT3X**: Temperature + Humidity (Sensirion)
+  - **HTU21D**: Temperature + Humidity (TE Connectivity)
+- **Auto-detection**: Sensors are automatically detected at boot via I2C scan
+- **Conditional compilation**: Select sensor type via `#define` in `include/config.h`
+- **Graceful degradation**: Shows "N/A" when no sensor detected
+
+#### Temperature Unit Selection
+- **Celsius/Fahrenheit toggle** in WebUI with real-time conversion
+- **Persistent storage**: Temperature unit preference saved in NVS
+- **API support**: `useFahrenheit` boolean in `/api/state` and `/api/config`
+- **Display formatting**: Shows temperature with appropriate unit symbol (°C or °F)
+
+#### TFT Display Integration (Landscape Mode)
+- **Environmental data display** below digital time in landscape mode left panel
+- **Position**: y=218 (below digital time at y=181)
+- **Adaptive format**:
+  - BME280: `25° 65% 1013hPa` (temp, humidity, pressure)
+  - BMP280: `25°  1013hPa` (temp, pressure)
+  - SHT3X/HTU21D: `25°  65%` (temp, humidity)
+- **Smooth font**: Uses `kFontNote` for consistent styling
+- **Auto-hiding**: Only shows when in landscape mode and sensor available
+
+#### WebUI Display Mirror Integration (New in 2.6.1)
+- **Environmental data in mirror**: Canvas display now shows sensor readings matching TFT
+- **Live updates**: Environmental data updates every 2 seconds with mirror refresh
+- **Landscape mode only**: Displays at y=218 below digital time, just like TFT
+- **Matching format**: Exact same format as TFT display (temp, humidity, pressure based on sensor)
+- **API enhancement**: `/api/mirror` endpoint now includes:
+  - `sensorAvailable` - boolean indicating sensor presence
+  - `sensorType` - sensor model name
+  - `envData` - pre-formatted environmental string
+- **Color consistency**: Light grey (#C0C0C0) matching TFT_LIGHTGREY
+
+#### WebUI Status Display
+- **Sensor Type**: Shows detected sensor model (BMP280, BME280, SHT3X, HTU21D, or N/A)
+- **Temperature**: Real-time temperature with unit toggle
+- **Humidity**: Displays relative humidity percentage (when available)
+- **Pressure**: Shows barometric pressure in hPa (when available)
+- **Status updates**: Refreshes every 5 seconds
+
+#### Serial Output
+- **Periodic logging**: Sensor readings output to serial every 10 seconds
+- **Debug formatting**: Shows sensor type and available measurements
+- **Example**: `Sensor: BMP280 - 24.5°C, 1013.2 hPa`
+
+### Changed
+- **Config structure**: Added `bool useFahrenheit` field
+- **NVS keys**: Added `PREF_FAHRENHEIT` for temperature unit storage
+- **Library dependencies**: Added Adafruit sensor libraries (BMP280, BME280, SHT31, HTU21DF, Unified Sensor)
+- **API endpoints**:
+  - Updated `/api/state` to include sensor data and temperature unit
+  - Updated `/api/mirror` to include environmental data
+- **Project structure**: Added `include/config.h` for hardware configuration
+- **WebUI JavaScript**: Updated `app.js` with environmental data rendering in landscape mirror
+
+### Technical Details
+- **I2C pins**: SDA=GPIO27, SCL=GPIO22 (CYD Temp/Humidity Interface)
+- **Sensor polling**: 10-second update interval
+- **Memory impact**: Minimal - sensor objects conditionally compiled
+- **Initialization**: `testSensor()` auto-detects and initializes appropriate driver
+- **Data reading**: `updateSensorData()` supports all sensor types with conditional compilation
+- **Mirror format**: Pre-formatted string sent via API reduces WebUI complexity
+
+---
+
+## [2.6.0] - 2026-01-28
+
+### Added - Flip Display & Screenshot Improvements
+
+#### Flip Display Feature
+- **180° rotation option** allows mounting CYD with USB connector on either side
+- **Portrait mode**: USB bottom (normal) or top (flipped)
+- **Landscape mode**: USB right (normal) or left (flipped)
+- **Persistent storage**: Flip setting saved in NVS, survives reboots
+- **WebUI control**: Checkbox next to Display Mode dropdown
+- **API support**: `flipDisplay` boolean in `/api/state` and `/api/config` endpoints
+- **Rotation values**: 0=portrait, 1=landscape, 2=portrait-flipped, 3=landscape-flipped
+
+#### Screenshot Capture Improvements
+- **Changed to BMP format** from JPEG for better reliability
+- **Removed JPEGENC library dependency** - simpler codebase
+- **Row-by-row streaming** minimizes memory usage (~1KB buffer vs 150KB+)
+- **File format**: 24-bit BMP with proper padding and bottom-up row order
+- **File size**: ~230KB uncompressed (trade-off for reliability)
+- **Downloads as**: `clock_snapshot.bmp`
+
+### Fixed
+
+#### Colon Blinking on Startup
+- **Problem**: After firmware upload, colons didn't blink until config change or mode switch
+- **Root cause**: `lastColonState` initialization timing issue with first draw
+- **Solution**:
+  - Simplified `lastColonState` initialization to `true`
+  - First draw triggers via `timeChanged=true` (empty string comparison)
+  - Subsequent draws handle colon blink correctly
+- **Result**: Colons blink immediately on boot
+
+#### Text Padding in Landscape Mode
+- **Problem**: Home city time (left panel) showed ghosting/artifacts when colons blinked
+- **Root cause**: Missing `setTextPadding()` call for home city and remote city times
+- **Solution**: Added `tft.setTextPadding(timePadWidth)` to both:
+  - Home city digital time (below analog clock)
+  - Remote cities time display (right panel)
+- **Result**: Clean text updates with no artifacts
+
+### Changed
+- **Config structure**: Added `bool flipDisplay` field
+- **NVS keys**: Added `PREF_FLIP` for persistent flip storage
+- **Rotation logic**: `applyRotation()` now calculates rotation 0-3 based on landscape+flip
+- **Library dependencies**: Removed `bitbank2/JPEGENC @ ^1.0.1`
+- **WebUI**: Added flip display checkbox in System Status section
+
+### Documentation
+- **CLAUDE.md**: Updated with flip display feature and BMP screenshot details
+- **platformio.ini**: Removed JPEGENC library dependency
+
+---
+
 ## [2.5.0] - 2026-01-28
 
 ### Added - NEXT DAY Indicator & Screenshot Capture

@@ -1,4 +1,4 @@
-![Version](https://img.shields.io/badge/version-2.5.0-blue)
+![Version](https://img.shields.io/badge/version-2.6.1-blue)
 ![Platform](https://img.shields.io/badge/platform-ESP32-green)
 ![Framework](https://img.shields.io/badge/framework-Arduino-orange)
 
@@ -60,6 +60,7 @@ A feature-rich world clock display for the ESP32 CYD (Cheap Yellow Display) feat
 - **Dual Display Modes**:
   - **Portrait (240x320)**: Classic vertical layout with all cities stacked
   - **Landscape (320x240)**: Analogue clock with home city + 5 remote cities panel
+- **Flip Display**: 180° rotation option allows mounting with USB on top/bottom (portrait) or left/right (landscape)
 - **Analogue Clock** (Landscape mode): Real-time clock face with hour, minute, and second hands
 - **Smooth Fonts**: Optional TFT_eSPI smooth fonts from LittleFS
 - **Visual Indicators**:
@@ -68,13 +69,20 @@ A feature-rich world clock display for the ESP32 CYD (Cheap Yellow Display) feat
   - "NEXT DAY" (cyan) for cities in next day
   - Color-coded status messages
 - **LDR Support**: Light sensor for ambient brightness detection
+- **Environmental Sensors** (Optional): I2C sensor support for temperature, humidity, and pressure
+  - **Supported sensors**: BMP280, BME280, SHT3X, HTU21D
+  - **Auto-detection**: Automatically detects connected sensor at boot
+  - **Temperature unit toggle**: Switch between Celsius and Fahrenheit
+  - **Display location**: Landscape mode only (below digital time)
 
 ### Web-Based Configuration
 
 - **Web-Based Config**: Configure all cities via browser interface
 - **Live Clock Mirror**: Real-time display of all city times in the WebUI
-- **Display Mode Toggle**: Switch between portrait and landscape modes
-- **NVS Storage**: Persistent timezone configuration across reboots
+- **Environmental Data in Mirror**: Shows sensor readings in landscape mirror (matching TFT display)
+- **Screenshot Capture**: Download actual TFT display pixels as BMP image via WebUI button
+- **Display Mode Toggle**: Switch between portrait and landscape modes, with flip option
+- **NVS Storage**: Persistent timezone and display configuration across reboots
 - **WiFiManager**: Easy WiFi setup with captive portal
 - **Default Cities**: Sydney, Vancouver, London, Nairobi, Denver
 
@@ -121,11 +129,21 @@ A feature-rich world clock display for the ESP32 CYD (Cheap Yellow Display) feat
 | Touch CLK  | 25   | T_CLK                   |
 | Touch CS   | 33   | T_CS                    |
 
-### Pin Configuration (Other)
+### Pin Configuration (Sensors)
 
 | Function | GPIO | Notes                    |
 |----------|------|--------------------------|
 | LDR      | 34   | Analog input (0-4095)    |
+| I2C SDA  | 27   | I2C data (optional sensors) |
+| I2C SCL  | 22   | I2C clock (optional sensors) |
+
+**Optional I2C Sensors** (Temperature/Humidity/Pressure):
+- BMP280: Temperature + Pressure
+- BME280: Temperature + Humidity + Pressure
+- SHT3X: Temperature + Humidity
+- HTU21D: Temperature + Humidity
+
+See [include/config.h](include/config.h) to enable sensor support.
 
 ## Installation
 
@@ -186,7 +204,7 @@ The web UI provides:
 
 - **Live Clock Display**: Real-time mirror of all city times (updates every 2 seconds)
 - **System Status**: Firmware version, uptime, WiFi info, heap memory, LDR value
-- **Display Mode**: Toggle between portrait (240x320) and landscape (320x240) modes
+- **Display Mode**: Toggle between portrait (240x320) and landscape (320x240) modes with flip option
 - **Debug Level Control**: Adjust logging verbosity in real-time (Off/Error/Warn/Info/Verbose)
 - **Timezone Configuration**:
   - Home city (reference timezone)

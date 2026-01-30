@@ -11,7 +11,23 @@
 #include <time.h>
 #include <SPI.h>
 #include <XPT2046_Touchscreen.h>
+#include <Wire.h>
+#include "config.h"
 #include "timezones.h"
+
+// Sensor libraries (conditional based on config.h)
+#ifdef USE_BMP280
+  #include <Adafruit_BMP280.h>
+#endif
+#ifdef USE_BME280
+  #include <Adafruit_BME280.h>
+#endif
+#ifdef USE_SHT3X
+  #include <Adafruit_SHT31.h>
+#endif
+#ifdef USE_HTU21D
+  #include <Adafruit_HTU21DF.h>
+#endif
 
 // =========================
 // Debug System
@@ -118,6 +134,28 @@ Preferences prefs;
 SPIClass touchSPI = SPIClass(VSPI);  // Separate SPI bus for touch
 XPT2046_Touchscreen touchscreen(XPT2046_CS, XPT2046_IRQ);
 
+// Sensor objects (only one will be initialized based on config.h)
+#ifdef USE_BMP280
+  Adafruit_BMP280 bmp280;
+#endif
+#ifdef USE_BME280
+  Adafruit_BME280 bme280;
+#endif
+#ifdef USE_SHT3X
+  Adafruit_SHT31 sht3x = Adafruit_SHT31();
+#endif
+#ifdef USE_HTU21D
+  Adafruit_HTU21DF htu21d = Adafruit_HTU21DF();
+#endif
+
+bool sensorAvailable = false;  // Sensor detection flag
+const char* sensorType = "NONE";  // Sensor type name
+
+// Environmental sensor readings (updated periodically)
+float temperature = 0.0;    // Celsius
+float humidity = 0.0;       // Relative humidity (%)
+float pressure = 0.0;       // hPa (hectopascals / millibars)
+
 // Cached WiFi info (updated on connect, prevents String allocation every API call)
 char cachedSSID[33] = "";
 char cachedIP[16] = "";
@@ -157,7 +195,7 @@ bool showingDiagnostics = false;
 unsigned long diagnosticsStartTime = 0;
 const unsigned long DIAGNOSTICS_TIMEOUT = 15000; // 15 seconds
 
-#define FIRMWARE_VERSION "2.5.0"
+#define FIRMWARE_VERSION "2.6.1"
 #define OTA_HOSTNAME "WorldClock"
 #define OTA_PASSWORD "change-me"  // TODO: Change this!
 
@@ -168,6 +206,8 @@ struct Config {
   char remoteCities[5][32];    // City labels (expanded to 5)
   char remoteTzStrings[5][64]; // Timezone strings (expanded to 5)
   bool landscapeMode;          // Display orientation: true = landscape, false = portrait
+  bool flipDisplay;            // Flip display 180°: allows USB on opposite side
+  bool useFahrenheit;          // Temperature unit: false = Celsius, true = Fahrenheit
 };
 
 Config config;
@@ -429,6 +469,8 @@ const char *DEFAULT_REMOTE_TZS[] = {
 #define PREF_HOME_TZ "homeTz"
 #define PREF_REMOTE_PREFIX "remote"  // remote0Label, remote0Tz, etc.
 #define PREF_LANDSCAPE "landscape"   // Display orientation: true = landscape
+#define PREF_FLIP "flip"             // Flip display 180°: true = flipped
+#define PREF_FAHRENHEIT "fahrenheit" // Temperature unit: true = Fahrenheit, false = Celsius
 
 // Helper: Extract city name only (strip country after comma)
 // FIXED: Operates on char* instead of String to avoid heap allocation
@@ -474,12 +516,15 @@ void loadConfig() {
     strlcpy(config.remoteTzStrings[i], tz.c_str(), sizeof(config.remoteTzStrings[i]));
   }
 
-  // Load display orientation
-  config.landscapeMode = prefs.getBool(PREF_LANDSCAPE, false);  // Default: portrait
+  // Load display orientation and temperature unit
+  config.landscapeMode = prefs.getBool(PREF_LANDSCAPE, false);    // Default: portrait
+  config.flipDisplay = prefs.getBool(PREF_FLIP, false);           // Default: not flipped
+  config.useFahrenheit = prefs.getBool(PREF_FAHRENHEIT, false);   // Default: Celsius
 
   prefs.end();
-  DBG_INFO("Config loaded: Home=%s, Remote0=%s, Landscape=%d\n",
-           config.homeCityLabel, config.remoteCities[0], config.landscapeMode);
+  DBG_INFO("Config loaded: Home=%s, Remote0=%s, Landscape=%d, Flip=%d, °%s\n",
+           config.homeCityLabel, config.remoteCities[0], config.landscapeMode, config.flipDisplay,
+           config.useFahrenheit ? "F" : "C");
 }
 
 // Save configuration to NVS
@@ -492,17 +537,27 @@ void saveConfig() {
     prefs.putString((String(PREF_REMOTE_PREFIX) + i + "Tz").c_str(), config.remoteTzStrings[i]);
   }
   prefs.putBool(PREF_LANDSCAPE, config.landscapeMode);
+  prefs.putBool(PREF_FLIP, config.flipDisplay);
+  prefs.putBool(PREF_FAHRENHEIT, config.useFahrenheit);
   prefs.end();
   DBG_INFO("Config saved\n");
 }
 
 // Apply display rotation based on config
+// Rotation values: 0=portrait, 1=landscape, 2=portrait-flipped, 3=landscape-flipped
 void applyRotation() {
-  int rotation = config.landscapeMode ? 1 : 0;
+  int rotation;
+  if (config.landscapeMode) {
+    rotation = config.flipDisplay ? 3 : 1;  // Landscape: 1 normal, 3 flipped
+  } else {
+    rotation = config.flipDisplay ? 2 : 0;  // Portrait: 0 normal, 2 flipped
+  }
   tft.setRotation(rotation);
   touchscreen.setRotation(rotation);
-  DBG_INFO("Display rotation set to %d (%s)\n",
-           rotation, config.landscapeMode ? "landscape" : "portrait");
+  DBG_INFO("Display rotation set to %d (%s%s)\n",
+           rotation,
+           config.landscapeMode ? "landscape" : "portrait",
+           config.flipDisplay ? ", flipped" : "");
 }
 
 // Color palette.
@@ -526,7 +581,7 @@ const int kLandscapeRemoteRowHeight = 48;  // 240 / 5 = 48px per remote city
 
 // Analog clock settings (landscape mode left panel)
 const int kClockCenterX = 60;          // Center of left panel (120/2)
-const int kClockCenterY = 120;         // Centered between date (y~60) and digital time (y=185)
+const int kClockCenterY = 120;         // Centered between date (y~60) and digital time (y=181)
 const int kClockRadius = 50;           // Clock face radius
 const int kHourHandLen = 25;           // Hour hand length
 const int kMinuteHandLen = 35;         // Minute hand length
@@ -548,6 +603,7 @@ const int kFallbackNote = 2;
 // Forward declarations
 void takeScreenshot();
 void takeScreenshotRaw();
+void drawEnvironmentalData();
 
 // Cached state to minimize redraws and flicker.
 // Use fixed char arrays instead of String to avoid heap fragmentation
@@ -728,6 +784,168 @@ int readLDR() {
   return sum / samples;
 }
 
+// Forward declaration
+bool updateSensorData();
+
+// Test and initialize I2C sensor
+// Tries to detect and initialize one of: BMP280, BME280, SHT3X, or HTU21D
+// Returns true if sensor detected and working, false otherwise
+bool testSensor() {
+  Wire.begin(SENSOR_SDA_PIN, SENSOR_SCL_PIN);
+  delay(100);  // Allow I2C bus to stabilize
+  DBG_STEP("Testing I2C sensor...");
+
+#ifdef USE_BMP280
+  // Test BMP280 sensor (Temperature + Pressure)
+  if (bmp280.begin(0x76, 0x58)) {
+    sensorAvailable = true;
+    sensorType = "BMP280";
+    // Configure sensor for weather monitoring
+    bmp280.setSampling(Adafruit_BMP280::MODE_NORMAL,
+                      Adafruit_BMP280::SAMPLING_X2,
+                      Adafruit_BMP280::SAMPLING_X16,
+                      Adafruit_BMP280::FILTER_X16,
+                      Adafruit_BMP280::STANDBY_MS_500);
+    updateSensorData();
+    DBG_INFO("BMP280 OK at 0x76: %.1f°C, %.1f hPa\n", temperature, pressure);
+    return true;
+  } else if (bmp280.begin(0x77, 0x58)) {
+    sensorAvailable = true;
+    sensorType = "BMP280";
+    bmp280.setSampling(Adafruit_BMP280::MODE_NORMAL,
+                      Adafruit_BMP280::SAMPLING_X2,
+                      Adafruit_BMP280::SAMPLING_X16,
+                      Adafruit_BMP280::FILTER_X16,
+                      Adafruit_BMP280::STANDBY_MS_500);
+    updateSensorData();
+    DBG_INFO("BMP280 OK at 0x77: %.1f°C, %.1f hPa\n", temperature, pressure);
+    return true;
+  }
+  DBG_WARN("BMP280 not found at 0x76 or 0x77\n");
+
+#elif defined(USE_BME280)
+  // Test BME280 sensor (Temperature + Humidity + Pressure)
+  if (bme280.begin(0x76, &Wire)) {
+    sensorAvailable = true;
+    sensorType = "BME280";
+    bme280.setSampling(Adafruit_BME280::MODE_FORCED,
+                      Adafruit_BME280::SAMPLING_X1,
+                      Adafruit_BME280::SAMPLING_X1,
+                      Adafruit_BME280::SAMPLING_X1,
+                      Adafruit_BME280::FILTER_OFF);
+    updateSensorData();
+    DBG_INFO("BME280 OK at 0x76: %.1f°C, %.1f%%, %.1f hPa\n", temperature, humidity, pressure);
+    return true;
+  } else if (bme280.begin(0x77, &Wire)) {
+    sensorAvailable = true;
+    sensorType = "BME280";
+    bme280.setSampling(Adafruit_BME280::MODE_FORCED,
+                      Adafruit_BME280::SAMPLING_X1,
+                      Adafruit_BME280::SAMPLING_X1,
+                      Adafruit_BME280::SAMPLING_X1,
+                      Adafruit_BME280::FILTER_OFF);
+    updateSensorData();
+    DBG_INFO("BME280 OK at 0x77: %.1f°C, %.1f%%, %.1f hPa\n", temperature, humidity, pressure);
+    return true;
+  }
+  DBG_WARN("BME280 not found at 0x76 or 0x77\n");
+
+#elif defined(USE_SHT3X)
+  // Test SHT3X sensor (Temperature + Humidity)
+  if (sht3x.begin(0x44)) {
+    sensorAvailable = true;
+    sensorType = "SHT3X";
+    updateSensorData();
+    DBG_INFO("SHT3X OK at 0x44: %.1f°C, %.1f%%\n", temperature, humidity);
+    return true;
+  } else if (sht3x.begin(0x45)) {
+    sensorAvailable = true;
+    sensorType = "SHT3X";
+    updateSensorData();
+    DBG_INFO("SHT3X OK at 0x45: %.1f°C, %.1f%%\n", temperature, humidity);
+    return true;
+  }
+  DBG_WARN("SHT3X not found at 0x44 or 0x45\n");
+
+#elif defined(USE_HTU21D)
+  // Test HTU21D sensor (Temperature + Humidity)
+  if (htu21d.begin()) {
+    sensorAvailable = true;
+    sensorType = "HTU21D";
+    updateSensorData();
+    DBG_INFO("HTU21D OK at 0x40: %.1f°C, %.1f%%\n", temperature, humidity);
+    return true;
+  }
+  DBG_WARN("HTU21D not found at 0x40\n");
+
+#else
+  DBG_WARN("No sensor type defined in config.h\n");
+#endif
+
+  return false;
+}
+
+// Read sensor data - updates global temperature, humidity, and pressure variables
+// Supports BMP280, BME280, SHT3X, and HTU21D sensors
+// Returns true if reading successful, false otherwise
+bool updateSensorData() {
+  if (!sensorAvailable) {
+    return false;
+  }
+
+  float newTemp = NAN;
+  float newHumidity = NAN;
+  float newPressure = NAN;
+
+#ifdef USE_BMP280
+  // BMP280: Temperature + Pressure
+  newTemp = bmp280.readTemperature();
+  newPressure = bmp280.readPressure() / 100.0;  // Convert Pa to hPa
+#elif defined(USE_BME280)
+  // BME280: Temperature + Humidity + Pressure
+  bme280.takeForcedMeasurement();
+  newTemp = bme280.readTemperature();
+  newHumidity = bme280.readHumidity();
+  newPressure = bme280.readPressure() / 100.0;  // Convert Pa to hPa
+#elif defined(USE_SHT3X)
+  // SHT3X: Temperature + Humidity
+  newTemp = sht3x.readTemperature();
+  newHumidity = sht3x.readHumidity();
+#elif defined(USE_HTU21D)
+  // HTU21D: Temperature + Humidity
+  newTemp = htu21d.readTemperature();
+  newHumidity = htu21d.readHumidity();
+#endif
+
+  // Validate and update temperature
+  if (!isnan(newTemp) && newTemp >= -50 && newTemp <= 100) {
+    temperature = newTemp;
+  } else {
+    DBG_WARN("Sensor temperature reading invalid: %.1f°C\n", newTemp);
+    return false;
+  }
+
+  // Validate and update humidity (if available)
+  if (!isnan(newHumidity)) {
+    if (newHumidity >= 0 && newHumidity <= 100) {
+      humidity = newHumidity;
+    } else {
+      DBG_WARN("Sensor humidity reading invalid: %.1f%%\n", newHumidity);
+    }
+  }
+
+  // Validate and update pressure (if available)
+  if (!isnan(newPressure)) {
+    if (newPressure >= 300 && newPressure <= 1200) {
+      pressure = newPressure;
+    } else {
+      DBG_WARN("Sensor pressure reading invalid: %.1f hPa\n", newPressure);
+    }
+  }
+
+  return true;
+}
+
 // Optional: list files on LittleFS to confirm fonts are present.
 void logLittleFSContents() {
   if (!smoothFontsReady) {
@@ -881,10 +1099,10 @@ void drawStaticLayoutPortrait() {
 }
 
 // Draw static layout for landscape mode (320x240)
-// Left panel (120px): City name, HOME, date, analog clock, digital time
+// Left panel (120px): City name, HOME, date, analog clock, digital time, environmental data
 // Right panel (200px): 5 remote cities stacked vertically with times
 void drawStaticLayoutLandscape() {
-  // LEFT PANEL layout: City (y=6) → HOME (y=30) → Date (y=48) → Clock (y=120) → Time (y=185)
+  // LEFT PANEL layout: City (y=6) → HOME (y=30) → Date (y=48) → Clock (y=120) → Time (y=181) → Env (y=218)
 
   // Home city label (at top) - use smaller font for long names (>9 chars)
   int cityLen = strlen(config.homeCityLabel);
@@ -908,7 +1126,8 @@ void drawStaticLayoutLandscape() {
   // Draw analog clock face (centered at y=120)
   drawAnalogClockFace();
 
-  // Digital time will be drawn by drawTimesLandscape() at Y=185
+  // Digital time will be drawn by drawTimesLandscape() at y=181
+  // Environmental data will be drawn by drawEnvironmentalData() at y=218
 
   // Divider line between left and right panels
   tft.drawFastVLine(kLeftPanelWidth - 1, 0, tft.height(), TFT_DARKGREY);
@@ -939,9 +1158,45 @@ void drawStaticLayout() {
   } else {
     drawStaticLayoutPortrait();
   }
+
+  // Draw environmental data (landscape mode only, if sensor available)
+  drawEnvironmentalData();
 }
 
 // Draw or update the header date string.
+// Draw environmental sensor data in landscape mode (left panel)
+// Only draws if sensor is available and in landscape mode
+// Positioned below digital time (y=218)
+void drawEnvironmentalData() {
+  if (!config.landscapeMode || !sensorAvailable) {
+    return;  // Only show in landscape mode when sensor available
+  }
+
+  char envStr[32];
+  int displayTemp = config.useFahrenheit ? (int)(temperature * 9.0 / 5.0 + 32) : (int)temperature;
+  const char* tempUnit = config.useFahrenheit ? "F" : "C";
+
+#if defined(USE_BME280)
+  // BME280: Temperature + Humidity + Pressure
+  snprintf(envStr, sizeof(envStr), "%d%s %d%% %dhPa", displayTemp, tempUnit, (int)humidity, (int)pressure);
+#elif defined(USE_BMP280)
+  // BMP280: Temperature + Pressure
+  snprintf(envStr, sizeof(envStr), "%d%s  %dhPa", displayTemp, tempUnit, (int)pressure);
+#else
+  // SHT3X or HTU21D: Temperature + Humidity
+  snprintf(envStr, sizeof(envStr), "%d%s  %d%%", displayTemp, tempUnit, (int)humidity);
+#endif
+
+  // Draw below digital time (time at y=181, this at y=218)
+  int envY = 218;
+  setFont(kFontNote, kFallbackNote);  // Use smooth font matching other text
+  tft.setTextColor(TFT_LIGHTGREY, COLOR_BG);
+  tft.setTextDatum(TC_DATUM);
+  tft.setTextPadding(tft.textWidth("888F 888% 8888hPa"));  // Padding to clear old text
+  tft.drawString(envStr, kLeftPanelWidth / 2, envY);
+  tft.setTextPadding(0);  // Reset padding
+}
+
 void drawHeaderDate(const char *dateStr) {
   setFont(kFontHeader, kFallbackHeader);
   tft.setTextColor(COLOR_TIME, COLOR_BG);
@@ -994,9 +1249,7 @@ void drawTimesPortrait() {
 
     if (timeChanged || prevDayChanged || nextDayChanged || colonChanged) {
       setFont(kFontTime, kFallbackTime);
-      int timeWidth = tft.textWidth("88:88");
-      int clearX = (tft.width() - kPad) - timeWidth - 2;
-      tft.fillRect(clearX, timeY, timeWidth + 4, tft.fontHeight(), COLOR_BG);
+      tft.setTextColor(COLOR_TIME, COLOR_BG);  // Background color handles clearing
       tft.setTextDatum(TR_DATUM);
 
       // Build time string with colon or space for blinking
@@ -1060,13 +1313,12 @@ void drawTimesLandscape() {
     bool colonChanged = (info.showColon != lastColonState[0]);
 
     if (timeChanged || colonChanged) {
-      int homeTimeY = 185;  // Below analog clock (center Y=120, radius=50)
+      int homeTimeY = 181;  // Below analog clock (center Y=120, radius=50), moved up 4px for sensor data
 
       setFont(kFontTime, kFallbackTime);
+      tft.setTextPadding(timePadWidth);  // Enable padding to clear old text
       tft.setTextColor(COLOR_TIME, COLOR_BG);
       tft.setTextDatum(TC_DATUM);
-      // Clear home time area
-      tft.fillRect(kPad, homeTimeY, kLeftPanelWidth - kPad * 2 - 2, 30, COLOR_BG);
 
       // Build time string with colon or space for blinking
       char displayTime[8];
@@ -1128,8 +1380,7 @@ void drawTimesLandscape() {
     if (timeChanged || colonChanged) {
       // Draw time right-aligned (with colon or space for blinking)
       setFont(kFontTime, kFallbackTime);
-      int timeWidth = tft.textWidth("88:88");
-      tft.fillRect(tft.width() - 6 - timeWidth - 2, timeY, timeWidth + 4, tft.fontHeight(), COLOR_BG);
+      tft.setTextPadding(timePadWidth);  // Enable padding to clear old text
       tft.setTextColor(COLOR_TIME, COLOR_BG);
       tft.setTextDatum(TR_DATUM);
 
@@ -1352,6 +1603,23 @@ void handleGetState() {
   doc["debugLevel"] = debugLevel;
   doc["ldrValue"] = readLDR();
   doc["landscapeMode"] = config.landscapeMode;
+  doc["flipDisplay"] = config.flipDisplay;
+
+  // Environmental sensor data
+  doc["sensorAvailable"] = sensorAvailable;
+  doc["sensorType"] = sensorType;
+  doc["useFahrenheit"] = config.useFahrenheit;
+  if (sensorAvailable) {
+    int displayTemp = config.useFahrenheit ? (int)(temperature * 9.0 / 5.0 + 32) : (int)temperature;
+    doc["temperature"] = displayTemp;
+    doc["temperatureRaw"] = serialized(String(temperature, 1));  // Always Celsius
+#if defined(USE_BME280) || defined(USE_SHT3X) || defined(USE_HTU21D)
+    doc["humidity"] = serialized(String(humidity, 0));  // No decimal places
+#endif
+#if defined(USE_BME280) || defined(USE_BMP280)
+    doc["pressure"] = serialized(String(pressure, 1));  // 1 decimal place
+#endif
+  }
 
   // WiFi info - use cached values to avoid String allocations
   doc["wifi_ssid"] = cachedSSID;
@@ -1481,6 +1749,25 @@ void handlePostConfig() {
     }
   }
 
+  // Parse flip display option
+  if (!doc["flipDisplay"].isNull()) {
+    bool newFlip = doc["flipDisplay"].as<bool>();
+    if (config.flipDisplay != newFlip) {
+      config.flipDisplay = newFlip;
+      rotationChanged = true;
+      DBG_INFO("  Flip display: %s\n", newFlip ? "yes" : "no");
+    }
+  }
+
+  // Parse temperature unit option
+  if (!doc["useFahrenheit"].isNull()) {
+    bool newFahrenheit = doc["useFahrenheit"].as<bool>();
+    if (config.useFahrenheit != newFahrenheit) {
+      config.useFahrenheit = newFahrenheit;
+      DBG_INFO("  Temperature unit: %s\n", newFahrenheit ? "°F" : "°C");
+    }
+  }
+
   saveConfig();
   loadConfig();  // Reload config immediately - no reboot needed
   parseAllTimezones();  // Re-parse TZ strings for manual calculation
@@ -1538,61 +1825,55 @@ void handleScreenshot() {
   takeScreenshot();
 }
 
-// GET /api/snapshot - Stream BMP image of current display
-// Streams directly to client to avoid memory issues
+// GET /api/snapshot - Capture display as BMP image (streamed row-by-row)
+// BMP is simpler and more reliable than JPEG encoding on ESP32
 void handleSnapshot() {
   DBG_INFO("GET /api/snapshot - Capturing display as BMP\n");
 
   // Wait for colons to be visible (even second = colon shown)
-  // Maximum wait of 1.1 seconds to ensure we catch the next even second
   time_t startWait = time(nullptr);
   while ((time(nullptr) % 2) != 0) {
     delay(100);
-    if (time(nullptr) - startWait > 2) break;  // Safety timeout
+    if (time(nullptr) - startWait > 2) break;
   }
-  // Small additional delay to ensure display has updated
-  delay(100);
+
+  // Force display redraw to show colons
+  drawTimes();
+  delay(50);
 
   int width = tft.width();
   int height = tft.height();
 
-  // BMP row padding (rows must be multiple of 4 bytes)
+  // BMP rows must be padded to multiple of 4 bytes
   int rowSize = ((width * 3 + 3) / 4) * 4;
   int imageSize = rowSize * height;
-  int fileSize = 54 + imageSize;  // 54-byte header + pixel data
+  int fileSize = 54 + imageSize;
 
-  // BMP Header (14 bytes) + DIB Header (40 bytes) = 54 bytes
+  DBG_INFO("BMP: %dx%d, %d bytes\n", width, height, fileSize);
+
+  // Allocate single row buffer only (~720-960 bytes)
+  uint8_t* rowBuf = (uint8_t*)malloc(rowSize);
+  if (!rowBuf) {
+    DBG_ERROR("Failed to allocate row buffer\n");
+    server.send(500, "text/plain", "Memory allocation failed");
+    return;
+  }
+
+  // Build 54-byte BMP header
   uint8_t header[54] = {0};
-
-  // BMP File Header (14 bytes)
-  header[0] = 'B';
-  header[1] = 'M';
-  header[2] = fileSize & 0xFF;
-  header[3] = (fileSize >> 8) & 0xFF;
-  header[4] = (fileSize >> 16) & 0xFF;
-  header[5] = (fileSize >> 24) & 0xFF;
+  header[0] = 'B'; header[1] = 'M';
+  header[2] = fileSize; header[3] = fileSize >> 8;
+  header[4] = fileSize >> 16; header[5] = fileSize >> 24;
   header[10] = 54;  // Pixel data offset
-
-  // DIB Header (BITMAPINFOHEADER - 40 bytes)
   header[14] = 40;  // DIB header size
-  header[18] = width & 0xFF;
-  header[19] = (width >> 8) & 0xFF;
-  header[22] = height & 0xFF;
-  header[23] = (height >> 8) & 0xFF;
+  header[18] = width; header[19] = width >> 8;
+  header[22] = height; header[23] = height >> 8;
   header[26] = 1;   // Color planes
-  header[28] = 24;  // Bits per pixel (RGB888)
-  header[34] = imageSize & 0xFF;
-  header[35] = (imageSize >> 8) & 0xFF;
-  header[36] = (imageSize >> 16) & 0xFF;
-  header[37] = (imageSize >> 24) & 0xFF;
+  header[28] = 24;  // Bits per pixel
+  header[34] = imageSize; header[35] = imageSize >> 8;
+  header[36] = imageSize >> 16; header[37] = imageSize >> 24;
 
-  // Send HTTP headers
-  server.sendHeader("Content-Type", "image/bmp");
-  server.sendHeader("Content-Disposition", "attachment; filename=\"clock_snapshot.bmp\"");
-  server.sendHeader("Content-Length", String(fileSize));
-  server.sendHeader("Cache-Control", "no-cache");
-
-  // Use chunked transfer
+  // Send HTTP response headers
   WiFiClient client = server.client();
   client.write("HTTP/1.1 200 OK\r\n");
   client.write("Content-Type: image/bmp\r\n");
@@ -1603,40 +1884,26 @@ void handleSnapshot() {
   // Send BMP header
   client.write(header, 54);
 
-  // Allocate row buffer (width * 3 bytes for RGB + padding)
-  uint8_t* rowBuf = (uint8_t*)malloc(rowSize);
-  if (!rowBuf) {
-    DBG_ERROR("Failed to allocate row buffer for snapshot\n");
-    return;
-  }
-
-  // BMP is bottom-up, so read from bottom row to top
+  // Stream pixel data row-by-row (BMP is bottom-up)
   for (int y = height - 1; y >= 0; y--) {
-    int bufIdx = 0;
+    // Read row pixel-by-pixel and convert RGB565 to BGR888
     for (int x = 0; x < width; x++) {
-      uint16_t color565 = tft.readPixel(x, y);
-
-      // Convert RGB565 to BGR888 (BMP uses BGR order)
-      uint8_t r = ((color565 >> 11) & 0x1F) << 3;
-      uint8_t g = ((color565 >> 5) & 0x3F) << 2;
-      uint8_t b = (color565 & 0x1F) << 3;
-
-      rowBuf[bufIdx++] = b;  // Blue
-      rowBuf[bufIdx++] = g;  // Green
-      rowBuf[bufIdx++] = r;  // Red
+      uint16_t c = tft.readPixel(x, y);
+      int i = x * 3;
+      rowBuf[i + 0] = (c & 0x1F) << 3;          // Blue
+      rowBuf[i + 1] = ((c >> 5) & 0x3F) << 2;   // Green
+      rowBuf[i + 2] = ((c >> 11) & 0x1F) << 3;  // Red
     }
-
-    // Pad row to multiple of 4 bytes
-    while (bufIdx < rowSize) {
-      rowBuf[bufIdx++] = 0;
+    // Zero any padding bytes
+    for (int p = width * 3; p < rowSize; p++) {
+      rowBuf[p] = 0;
     }
-
     client.write(rowBuf, rowSize);
-    yield();  // Allow WiFi stack to process
+    yield();
   }
 
   free(rowBuf);
-  DBG_INFO("Snapshot complete: %dx%d, %d bytes\n", width, height, fileSize);
+  DBG_INFO("BMP snapshot complete\n");
 }
 
 // GET /api/mirror - Return current clock state as JSON
@@ -1653,6 +1920,7 @@ void handleMirror() {
 
   // Display mode
   doc["landscapeMode"] = config.landscapeMode;
+  doc["flipDisplay"] = config.flipDisplay;
 
   // Date from home city (uppercase for display)
   char dateStr[32];
@@ -1687,6 +1955,28 @@ void handleMirror() {
     city["time"] = lastTimes[i + 1];
     city["prevDay"] = lastPrevDay[i + 1];
     city["nextDay"] = lastNextDay[i + 1];
+  }
+
+  // Environmental sensor data (for landscape mode display)
+  doc["sensorAvailable"] = sensorAvailable;
+  if (sensorAvailable) {
+    doc["sensorType"] = sensorType;
+    int displayTemp = config.useFahrenheit ? (int)(temperature * 9.0 / 5.0 + 32) : (int)temperature;
+    const char* tempUnit = config.useFahrenheit ? "F" : "C";
+
+    // Format environmental string to match TFT display
+    char envStr[32] = "";
+#if defined(USE_BME280)
+    // BME280: Temperature + Humidity + Pressure
+    snprintf(envStr, sizeof(envStr), "%d%s %d%% %dhPa", displayTemp, tempUnit, (int)humidity, (int)pressure);
+#elif defined(USE_BMP280)
+    // BMP280: Temperature + Pressure
+    snprintf(envStr, sizeof(envStr), "%d%s  %dhPa", displayTemp, tempUnit, (int)pressure);
+#else
+    // SHT3X or HTU21D: Temperature + Humidity
+    snprintf(envStr, sizeof(envStr), "%d%s  %d%%", displayTemp, tempUnit, (int)humidity);
+#endif
+    doc["envData"] = envStr;
   }
 
   String output;
@@ -2081,6 +2371,9 @@ void setup() {
   delay(100);  // Allow ADC to stabilize
   DBG_INFO("LDR initialized on pin %d, initial reading: %d\n", LDR_PIN, readLDR());
 
+  // Initialize I2C sensor (BMP280, BME280, SHT3X, or HTU21D)
+  testSensor();
+
   // Initialize touch screen with separate SPI bus (VSPI)
   // Using pin configuration confirmed working from fluid simulation demo
   pinMode(XPT2046_IRQ, INPUT);  // Configure IRQ pin as input
@@ -2169,6 +2462,23 @@ void setup() {
   // Draw clock interface
   drawStaticLayout();
 
+  // Reset cached state to force full redraw of times
+  lastDate[0] = '\0';
+  for (int i = 0; i < 6; i++) {
+    lastTimes[i][0] = '\0';
+    lastPrevDay[i] = false;
+    lastNextDay[i] = false;
+    // Use value 2 (invalid for bool comparison) to force first draw
+    // Actually just use true - the empty lastTimes will force timeChanged=true
+    lastColonState[i] = true;
+  }
+  // Reset analog clock state
+  lastSecond = -1;
+  lastMinute = -1;
+  lastHour = -1;
+  // Force time cache refresh
+  lastBatchUpdate = 0;
+
   // Show ready message
   DBG_INFO("==============================================\n");
   DBG_INFO("System ready! Touch screen to open diagnostics\n");
@@ -2182,6 +2492,10 @@ const unsigned long DISPLAY_UPDATE_INTERVAL = 1000;  // Update display every 1 s
 // Track last debug output time - 5 minutes to reduce overhead
 static unsigned long lastDebugOutput = 0;
 const unsigned long DEBUG_OUTPUT_INTERVAL = 300000;  // Output debug log every 5 minutes
+
+// Track last sensor reading time
+static unsigned long lastSensorRead = 0;
+const unsigned long SENSOR_READ_INTERVAL = 10000;  // Read sensor every 10 seconds
 
 void loop() {
   ArduinoOTA.handle();
@@ -2243,16 +2557,63 @@ void loop() {
       }
     }
 
-    // Also report heap and LDR status
+    // Also report heap, LDR, and environmental sensor status
     Serial.print(" | Heap: ");
     Serial.print(ESP.getFreeHeap());
     Serial.print(" bytes | LDR: ");
     Serial.print(readLDR());
+    if (sensorAvailable) {
+      int displayTemp = config.useFahrenheit ? (int)(temperature * 9.0 / 5.0 + 32) : (int)temperature;
+      const char* unit = config.useFahrenheit ? "F" : "C";
+      Serial.print(" | ");
+      Serial.print(sensorType);
+      Serial.print(": ");
+      Serial.print(displayTemp);
+      Serial.print("°");
+      Serial.print(unit);
+#if defined(USE_BME280) || defined(USE_SHT3X) || defined(USE_HTU21D)
+      Serial.print(", ");
+      Serial.print((int)humidity);
+      Serial.print("%");
+#endif
+#if defined(USE_BME280) || defined(USE_BMP280)
+      Serial.print(", ");
+      Serial.print((int)pressure);
+      Serial.print(" hPa");
+#endif
+    }
     Serial.println();
 
     // Warn if heap is getting low
     if (ESP.getFreeHeap() < 20000) {
       DBG_WARN("Low heap: %u bytes free\n", ESP.getFreeHeap());
+    }
+  }
+
+  // Read environmental sensor every 10 seconds and output to serial
+  if (sensorAvailable && (now - lastSensorRead >= SENSOR_UPDATE_INTERVAL)) {
+    lastSensorRead = now;
+
+    if (updateSensorData()) {
+      // Update environmental data display on TFT (landscape mode only)
+      drawEnvironmentalData();
+
+      if (debugLevel >= DBG_LEVEL_INFO) {
+        int displayTemp = config.useFahrenheit ? (int)(temperature * 9.0 / 5.0 + 32) : (int)temperature;
+        const char* unit = config.useFahrenheit ? "F" : "C";
+
+        // Build sensor info based on what's available
+#if defined(USE_BME280)
+        Serial.printf("[INFO] %s: %d°%s, %.0f%%, %.0f hPa\n",
+                      sensorType, displayTemp, unit, humidity, pressure);
+#elif defined(USE_BMP280)
+        Serial.printf("[INFO] %s: %d°%s, %.0f hPa\n",
+                      sensorType, displayTemp, unit, pressure);
+#else  // SHT3X or HTU21D
+        Serial.printf("[INFO] %s: %d°%s, %.0f%%\n",
+                      sensorType, displayTemp, unit, humidity);
+#endif
+      }
     }
   }
 }
