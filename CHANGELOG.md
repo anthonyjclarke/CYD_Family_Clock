@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Planned for v2.9.0
+
+- [ ] WiFi reconnect logic in main loop
+- [ ] Automatic NTP resync every 24 hours
+- [ ] Automatic brightness control using LDR
+- [ ] Touch-based city selection/editing
+
 ---
 
 ## [2.8.0] - 2026-02-01
