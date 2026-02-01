@@ -176,11 +176,47 @@
           <span id="ldrValue">--</span>
         </div>
         <div class="status-item">
+          <span class="label">Sensor:</span>
+          <span id="sensorType">--</span>
+        </div>
+        <div class="status-item">
+          <span class="label">Temperature:</span>
+          <span id="temperature">--</span>
+          <label style="margin-left: 10px; cursor: pointer;">
+            <input type="checkbox" id="useFahrenheit" style="margin-right: 4px;">
+            Use °F
+          </label>
+        </div>
+        <div class="status-item">
+          <span class="label">Humidity:</span>
+          <span id="humidity">--</span>
+        </div>
+        <div class="status-item">
+          <span class="label">Pressure:</span>
+          <span id="pressure">--</span>
+        </div>
+        <div class="status-item">
           <span class="label">Display Mode:</span>
           <select id="displayMode" style="padding: 2px 5px;">
             <option value="portrait">Portrait (240x320)</option>
             <option value="landscape">Landscape (320x240)</option>
           </select>
+          <label style="margin-left: 10px; cursor: pointer;">
+            <input type="checkbox" id="flipDisplay" style="margin-right: 4px;">
+            Flip 180°
+          </label>
+        </div>
+        <div class="status-item">
+          <span class="label">Screen Rotation:</span>
+          <label style="cursor: pointer; margin-right: 10px;">
+            <input type="checkbox" id="enableScreenRotation" style="margin-right: 4px;">
+            Enable (Portrait+Sensor)
+          </label>
+          <label style="font-size: 0.9rem;">
+            <span style="margin-right: 4px;">Interval:</span>
+            <input type="number" id="screenFlipInterval" min="3" max="30" style="width: 50px; padding: 2px 4px;">
+            <span style="margin-left: 4px;">sec</span>
+          </label>
         </div>
         <div class="status-item">
           <span class="label">Debug Level:</span>

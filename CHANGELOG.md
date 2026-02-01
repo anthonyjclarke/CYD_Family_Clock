@@ -7,8 +7,171 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Planned
-- **Portrait mode environmental data display** - Show sensor readings in portrait orientation
+---
+
+## [2.8.0] - 2026-02-01
+
+### Changed - Display Performance Optimization
+
+#### Hybrid Font System (MAJOR PERFORMANCE FIX)
+- **Near-instant screen transitions** - eliminated 3-second delay during mode switching
+- **Root cause**: Smooth font rendering from LittleFS is 5-10× slower than bitmap fonts
+- **Solution**: Hybrid approach using fast bitmap fonts for static elements, smooth fonts for dynamic time display
+- **Bitmap fonts now used for**:
+  - Title ("WORLD CLOCK")
+  - City labels (all 6 cities)
+  - "HOME" indicator
+  - Date display
+  - Environmental data labels
+  - Static headers
+- **Smooth fonts still used for**:
+  - Time displays (HH:MM) - keeps the most important element looking crisp
+  - Day indicators (Prev Day / Next Day)
+- **Result**:
+  - Screen redraws 5-10× faster (from ~3 seconds to near-instant)
+  - Time display retains smooth, antialiased appearance where it matters most
+  - Best of both worlds: speed + visual quality
+
+#### Font Loading Optimization (Batching)
+- **Batched drawing by font type** - draw all elements needing same font together, then switch once
+- **Reduced font switches during mode transitions**:
+  - Alternate portrait remote cities: **10 font switches → 2** (80% reduction)
+  - Landscape static layout: **Up to 5 font switches → 1** (80% reduction)
+- **Technical approach**:
+  - Collect what needs drawing in first pass
+  - Execute in font-batched passes:
+    - Pass 1: Draw all city names
+    - Pass 2: Draw all times
+    - Pass 3: Draw all day indicators
+
+#### Font Loading Optimization (Regular Updates)
+- **Optimized normal clock updates** (colon blink, minute changes) - already fast
+- **Eliminated redundant font loading**: Fonts loaded once per update cycle
+- **Reduced LittleFS I/O**: Minimized flash storage reads during display updates
+- **Optimized all display modes**:
+  - Portrait mode: Font loaded before loop, minimal switches for day indicators
+  - Landscape mode: Font loaded once for home/remote times
+  - Alternate portrait mode: Note font pre-loaded for remote cities loop
+
+### Added - Temperature Color Coding and Enhanced Environmental Display
+
+#### Temperature Visualization
+- **Color-coded temperature display** based on user-definable ranges:
+  - **Blue**: Freezing (≤ 0°C)
+  - **Cyan**: Cold (1-15°C)
+  - **Green**: Pleasant (16-25°C)
+  - **Orange**: Hot (26-35°C)
+  - **Red**: Extreme (> 35°C)
+- **Customizable thresholds**: Edit temperature ranges in src/main.cpp
+- **Celsius-based color determination**: Consistent color coding regardless of display unit
+- **Negative temperature support**: Correctly displays sub-zero temperatures with "-" prefix
+
+#### Enhanced Environmental Data Display
+- **Unit symbols added**:
+  - Temperature: "oC" or "oF" (lowercase 'o' as degree symbol)
+  - Pressure: "hPa" suffix
+  - Humidity: Already had "%" symbol
+- **Improved formatting**:
+  - Clear separation of value and unit
+  - Proper handling of negative values
+  - Color-coded temperature in both landscape and alternate portrait modes
+
+#### Alternate Portrait Mode Refinements
+- **Updated day indicators**: Changed from "PREV DAY"/"NEXT DAY" to "Prev Day"/"Next Day" for consistency with standard portrait
+- **Improved positioning**: Day indicators now directly below city name (no indent)
+- **Cleaner layout**: Removed separator lines between remote cities
+- **Better spacing**: Sensor data moved down to avoid overlap with home time
+- **Optimized vertical space**: Remote cities use full available height
+
+---
+
+## [2.7.0] - 2026-01-30
+
+### Added - Portrait Mode Environmental Display with Screen Rotation
+
+#### Alternate Portrait Screen
+- **Dual-screen rotation system** in portrait mode with environmental sensor
+- **Analogue clock display** in portrait mode alternate screen
+  - 55px radius clock face with 12 hour markers
+  - Animated hour, minute, and second hands
+  - Center dot with smooth hand movement
+  - Matches landscape mode analogue clock styling
+- **Home city focus layout**:
+  - Large analogue clock (y=55-165)
+  - Home city name with HOME indicator
+  - Large digital time display
+  - Environmental data (temperature, humidity, pressure)
+- **Compact remote city list**:
+  - 5 cities in 2-line format (17px per city)
+  - City name + time on first line
+  - PREV DAY / NEXT DAY indicator on second line
+  - Efficient use of remaining space (y=235-320)
+
+#### Screen Rotation Control
+- **Configurable auto-flip** between standard and alternate portrait screens
+- **Enable/disable toggle** in WebUI System Status section
+- **Adjustable interval**: 3-30 seconds (default: 8 seconds)
+- **Conditions for activation**:
+  - Portrait mode (not landscape)
+  - Environmental sensor available
+  - Screen rotation enabled
+- **Smooth transitions**: Preserves state between screen flips
+- **Persistent settings**: Stored in NVS across reboots
+
+#### WebUI Integration
+- **New controls** in System Status section:
+  - "Enable Screen Rotation (Portrait+Sensor)" checkbox
+  - "Interval" number input (3-30 second range with validation)
+- **Live mirror support**: Canvas shows both portrait layouts
+  - Standard portrait: 6-city stacked list
+  - Alternate portrait: Analogue clock + compact list
+- **Real-time rendering**: Mirrors current TFT screen state
+- **Automatic layout switching**: Based on `showingAlternateScreen` flag
+
+#### API Enhancements
+- **`/api/state` additions**:
+  - `enableScreenRotation` - boolean flag
+  - `screenFlipInterval` - seconds between flips (3-30)
+  - `showingAlternateScreen` - current screen state
+- **`/api/config` handlers**:
+  - POST `enableScreenRotation` to toggle feature
+  - POST `screenFlipInterval` with range validation
+- **`/api/mirror` additions**:
+  - `showingAlternateScreen` flag for WebUI rendering
+
+### Changed
+- **Config structure**: Added `enableScreenRotation` (bool), `screenFlipInterval` (uint8_t)
+- **NVS keys**: Added `PREF_SCREEN_ROTATION`, `PREF_FLIP_INTERVAL`
+- **Main loop**: Screen flip logic with configurable interval
+- **Drawing functions**: New `drawAlternatePortraitStatic()` and `drawAlternatePortraitUpdate()`
+- **WebUI JavaScript**: New rendering function `renderAlternatePortrait()`
+
+### Technical Details
+- **Memory usage**: ~300 lines added to main.cpp, ~200 lines to WebUI
+- **Screen dimensions**: 240x320 (portrait)
+- **Flip mechanism**: Time-based with `millis()` tracking
+- **State preservation**: All cached state variables maintained across flips
+- **Font consistency**: Uses same smooth fonts as standard portrait mode
+- **Environmental format**: Matches landscape mode display format
+
+### Layout Specifications
+
+**Alternate Portrait Screen (240x320)**:
+- Header: Title + Date (y=0-40)
+- Analogue clock: Center (120, 110), Radius 55px (y=40-170)
+- Home section: Name + HOME + Time + Environmental (y=172-235)
+- Remote cities: 5 × 17px compact rows (y=235-320)
+
+**Compact Remote City Format**:
+- Line 1 (y+2): City name (left, 9px) + Time (right, 14px)
+- Line 2 (y+14): PREV DAY / NEXT DAY indicator (8px, indented)
+
+### User Experience
+- **Non-intrusive**: Standard portrait mode unaffected when rotation disabled
+- **Informative**: Both city times and environmental data visible
+- **Customizable**: User controls enable state and flip speed
+- **Intuitive**: Clear visual distinction between standard and alternate screens
+- **Efficient**: Minimal redraw overhead with state caching
 
 ---
 

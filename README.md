@@ -1,4 +1,4 @@
-![Version](https://img.shields.io/badge/version-2.6.1-blue)
+![Version](https://img.shields.io/badge/version-2.8.0-blue)
 ![Platform](https://img.shields.io/badge/platform-ESP32-green)
 ![Framework](https://img.shields.io/badge/framework-Arduino-orange)
 
@@ -12,20 +12,42 @@ A feature-rich world clock display for the ESP32 CYD (Cheap Yellow Display) feat
 
 ### TFT Display
 
+**Portrait Modes (240x320)**
+
 <table>
 <tr>
 <td width="50%">
 
-**Portrait Mode (240x320)**
+**Standard Portrait**
 
 ![TFT Portrait Display](images/TFT_Portrait.jpg)
+
+*6 cities stacked vertically*
 
 </td>
 <td width="50%">
 
+**Alternate Portrait**
+
+![TFT Alternate Portrait Display](images/TFT_Alternate_Portrait.jpg)
+
+*Analogue clock + environmental data*
+
+</td>
+</tr>
+</table>
+
+---
+
 **Landscape Mode (320x240)**
 
+<table>
+<tr>
+<td align="center">
+
 ![TFT Landscape Display](images/TFT_Landscape.jpg)
+
+*Analogue clock + 5 remote cities panel*
 
 </td>
 </tr>
@@ -57,31 +79,55 @@ A feature-rich world clock display for the ESP32 CYD (Cheap Yellow Display) feat
 ### Display
 
 - **6 Timezone Display**: Configurable home city + 5 remote cities
-- **Dual Display Modes**:
+- **Triple Display Modes**:
   - **Portrait (240x320)**: Classic vertical layout with all cities stacked
+  - **Alternate Portrait (240x320)**: Analogue clock + environmental data display
   - **Landscape (320x240)**: Analogue clock with home city + 5 remote cities panel
+- **Portrait Screen Rotation** (NEW in v2.7.0): Auto-alternating display screens
+  - **Standard Screen**: 6 cities stacked vertically with day indicators
+  - **Alternate Screen**:
+    - Analogue clock (left side, top-left position)
+    - Home time prominently displayed (centered at top)
+    - Environmental sensor data (right side: Temp, Humidity, Pressure)
+    - Compact city list below (5 remote cities with day indicators)
+    - Temperature color-coded (freezing/cold/pleasant/hot/extreme)
+  - **Configurable interval**: 3-30 seconds (default: 8 seconds)
+  - **Enable/disable via WebUI**: Only active when environmental sensor present
 - **Flip Display**: 180° rotation option allows mounting with USB on top/bottom (portrait) or left/right (landscape)
-- **Analogue Clock** (Landscape mode): Real-time clock face with hour, minute, and second hands
+- **Analogue Clock**: Real-time clock face with hour, minute, and second hands
+  - **Landscape mode**: Left panel centered vertically with home city
+  - **Alternate portrait mode**: Top-left position (60, 80) flush to left edge
+  - **Animated**: Second hand updates every second with smooth movement
 - **Smooth Fonts**: Optional TFT_eSPI smooth fonts from LittleFS
 - **Visual Indicators**:
   - Blinking colon every second
-  - "PREV DAY" (yellow) for cities in previous day
-  - "NEXT DAY" (cyan) for cities in next day
+  - "Prev Day" (yellow) for cities in previous day
+  - "Next Day" (cyan) for cities in next day
+  - Color-coded temperature display (blue/cyan/green/orange/red)
   - Color-coded status messages
 - **LDR Support**: Light sensor for ambient brightness detection
 - **Environmental Sensors** (Optional): I2C sensor support for temperature, humidity, and pressure
   - **Supported sensors**: BMP280, BME280, SHT3X, HTU21D
   - **Auto-detection**: Automatically detects connected sensor at boot
   - **Temperature unit toggle**: Switch between Celsius and Fahrenheit
-  - **Display location**: Landscape mode only (below digital time)
+  - **Temperature color coding**: User-definable ranges (freezing/cold/pleasant/hot/extreme)
+  - **Units displayed**: oC/oF for temperature, % for humidity, hPa for pressure
+  - **Negative temperature support**: Correctly displays sub-zero temperatures with "-" prefix
+  - **Display location**:
+    - Landscape mode: Below home city time (single line format)
+    - Alternate portrait: Right side panel (multi-line format)
+    - Shows "n/a" when sensor unavailable or metric not supported
 
 ### Web-Based Configuration
 
 - **Web-Based Config**: Configure all cities via browser interface
 - **Live Clock Mirror**: Real-time display of all city times in the WebUI
-- **Environmental Data in Mirror**: Shows sensor readings in landscape mirror (matching TFT display)
+  - Mirrors both standard and alternate portrait layouts
+  - Renders analogue clock when alternate screen is active
+- **Environmental Data in Mirror**: Shows sensor readings in landscape and alternate portrait mirrors
 - **Screenshot Capture**: Download actual TFT display pixels as BMP image via WebUI button
 - **Display Mode Toggle**: Switch between portrait and landscape modes, with flip option
+- **Screen Rotation Control**: Enable/disable portrait rotation with adjustable interval (3-30 seconds)
 - **NVS Storage**: Persistent timezone and display configuration across reboots
 - **WiFiManager**: Easy WiFi setup with captive portal
 - **Default Cities**: Sydney, Vancouver, London, Nairobi, Denver
@@ -203,8 +249,19 @@ See [include/config.h](include/config.h) to enable sensor support.
 The web UI provides:
 
 - **Live Clock Display**: Real-time mirror of all city times (updates every 2 seconds)
-- **System Status**: Firmware version, uptime, WiFi info, heap memory, LDR value
+  - Mirrors both standard and alternate portrait layouts
+  - Renders analogue clock when alternate screen is active on device
+  - Shows environmental data in landscape and alternate portrait mirrors
+- **Screenshot Capture**: Download actual TFT display pixels as BMP image
+- **System Status**:
+  - Firmware version, uptime, WiFi info, heap memory, LDR value
+  - Environmental sensor data (type, temperature, humidity, pressure)
+  - Temperature unit toggle (Celsius ↔ Fahrenheit)
 - **Display Mode**: Toggle between portrait (240x320) and landscape (320x240) modes with flip option
+- **Screen Rotation Control**:
+  - Enable/disable portrait rotation (alternating screens)
+  - Configurable interval (3-30 seconds)
+  - Only available when environmental sensor present
 - **Debug Level Control**: Adjust logging verbosity in real-time (Off/Error/Warn/Info/Verbose)
 - **Timezone Configuration**:
   - Home city (reference timezone)
@@ -249,16 +306,58 @@ Format: `STD offset DST,start_rule,end_rule`
 - `start_rule`: When DST starts (Month.Week.Day/Hour)
 - `end_rule`: When DST ends
 
+### Alternate Portrait Mode Layout
+
+The alternate portrait mode provides a rich information display when environmental sensors are available:
+
+**Top Section:**
+- Home city label centered (e.g., "Home: SYDNEY")
+- Home time prominently displayed (large, centered)
+
+**Middle Section (Left):**
+- Analogue clock with hour, minute, and second hands
+- Real-time animation with smooth second hand movement
+- 12-hour markers with emphasis on 12/3/6/9 positions
+
+**Middle Section (Right):**
+- Environmental sensor data:
+  - Temperature with color coding and unit (oC/oF)
+  - Humidity percentage (% symbol)
+  - Barometric pressure (hPa)
+  - Shows "n/a" when sensor unavailable or metric not supported
+
+**Bottom Section:**
+- Separator line
+- 5 remote cities in compact format:
+  - City name and time on first line
+  - Day indicator ("Prev Day" or "Next Day") directly below city name
+  - No separator lines between cities for cleaner appearance
+
+**Temperature Color Coding:**
+- **Blue**: Freezing (≤ 0°C)
+- **Cyan**: Cold (1-15°C)
+- **Green**: Pleasant (16-25°C)
+- **Orange**: Hot (26-35°C)
+- **Red**: Extreme (> 35°C)
+
+*All thresholds are user-customizable in src/main.cpp*
+
 ### Customization
 
 Edit `src/main.cpp` to customize:
 
-- **Colors** (lines 138-141): `COLOR_BG`, `COLOR_LABEL`, `COLOR_TIME`
-- **Layout** (lines 144-147): Header heights, padding
-- **Fonts** (lines 150-157): Font names and fallback sizes
-- **Default Cities** (lines 83-91): Initial configuration
-- **Debug Level** (line 36): Default logging verbosity (0-4)
-- **OTA Password** (line 70): ⚠️ **Change from default "change-me"!**
+- **Colors** (lines ~594-596): `COLOR_BG`, `COLOR_LABEL`, `COLOR_TIME`
+- **Temperature Color Ranges** (lines ~498-511): User-definable temperature thresholds
+  - `TEMP_FREEZING_MAX` (default: 0°C) - Blue display
+  - `TEMP_COLD_MAX` (default: 15°C) - Cyan display
+  - `TEMP_PLEASANT_MAX` (default: 25°C) - Green display
+  - `TEMP_HOT_MAX` (default: 35°C) - Orange display
+  - Above TEMP_HOT_MAX - Red display (extreme heat)
+- **Layout** (lines ~613-620): Header heights, padding, panel widths
+- **Fonts** (lines ~623-630): Font names and fallback sizes
+- **Default Cities** (config loading section): Initial configuration
+- **Debug Level** (line ~66): Default logging verbosity (0-4)
+- **OTA Password** (line ~160): ⚠️ **Change from default "change-me"!**
 
 ## OTA Updates
 
