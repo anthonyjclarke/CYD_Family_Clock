@@ -12,6 +12,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('resetWifiBtn').addEventListener('click', handleResetWiFi);
   document.getElementById('debugLevel').addEventListener('change', handleDebugLevelChange);
   document.getElementById('displayMode').addEventListener('change', handleDisplayModeChange);
+  document.getElementById('flipDisplay').addEventListener('change', handleFlipDisplayChange);
+  document.getElementById('useFahrenheit').addEventListener('change', handleUseFahrenheitChange);
+  document.getElementById('enableScreenRotation').addEventListener('change', handleScreenRotationChange);
+  document.getElementById('screenFlipInterval').addEventListener('change', handleFlipIntervalChange);
   document.getElementById('snapshotBtn').addEventListener('click', handleSnapshot);
 
   // Timezone dropdown change listeners
@@ -228,7 +232,19 @@ async function updateStatus() {
     document.getElementById('uptime').textContent = formatUptime(data.uptime || 0);
     document.getElementById('freeHeap').textContent = formatBytes(data.freeHeap || 0);
     document.getElementById('ldrValue').textContent = data.ldrValue !== undefined ? data.ldrValue : '--';
+
+    // Sensor data
+    document.getElementById('sensorType').textContent = data.sensorAvailable ? data.sensorType : 'N/A';
+    const tempUnit = data.useFahrenheit ? ' °F' : ' °C';
+    document.getElementById('temperature').textContent = data.sensorAvailable && data.temperature !== undefined ? data.temperature + tempUnit : 'N/A';
+    document.getElementById('humidity').textContent = data.humidity !== undefined ? data.humidity + ' %' : 'N/A';
+    document.getElementById('pressure').textContent = data.pressure !== undefined ? data.pressure + ' hPa' : 'N/A';
+    document.getElementById('useFahrenheit').checked = data.useFahrenheit || false;
+
     document.getElementById('displayMode').value = data.landscapeMode ? 'landscape' : 'portrait';
+    document.getElementById('flipDisplay').checked = data.flipDisplay || false;
+    document.getElementById('enableScreenRotation').checked = data.enableScreenRotation !== undefined ? data.enableScreenRotation : true;
+    document.getElementById('screenFlipInterval').value = data.screenFlipInterval || 8;
     document.getElementById('debugLevel').value = data.debugLevel || 3;
   } catch (error) {
     console.error('Error updating status:', error);
@@ -252,7 +268,19 @@ async function loadState() {
     document.getElementById('uptime').textContent = formatUptime(data.uptime || 0);
     document.getElementById('freeHeap').textContent = formatBytes(data.freeHeap || 0);
     document.getElementById('ldrValue').textContent = data.ldrValue !== undefined ? data.ldrValue : '--';
+
+    // Sensor data
+    document.getElementById('sensorType').textContent = data.sensorAvailable ? data.sensorType : 'N/A';
+    const tempUnit = data.useFahrenheit ? ' °F' : ' °C';
+    document.getElementById('temperature').textContent = data.sensorAvailable && data.temperature !== undefined ? data.temperature + tempUnit : 'N/A';
+    document.getElementById('humidity').textContent = data.humidity !== undefined ? data.humidity + ' %' : 'N/A';
+    document.getElementById('pressure').textContent = data.pressure !== undefined ? data.pressure + ' hPa' : 'N/A';
+    document.getElementById('useFahrenheit').checked = data.useFahrenheit || false;
+
     document.getElementById('displayMode').value = data.landscapeMode ? 'landscape' : 'portrait';
+    document.getElementById('flipDisplay').checked = data.flipDisplay || false;
+    document.getElementById('enableScreenRotation').checked = data.enableScreenRotation !== undefined ? data.enableScreenRotation : true;
+    document.getElementById('screenFlipInterval').value = data.screenFlipInterval || 8;
     document.getElementById('debugLevel').value = data.debugLevel || 3;
 
     // Update form fields (only on explicit load, not during polling)
@@ -455,6 +483,109 @@ async function handleDisplayModeChange(event) {
   }
 }
 
+// Handle flip display change (180° rotation)
+async function handleFlipDisplayChange(event) {
+  const isFlipped = event.target.checked;
+
+  try {
+    const response = await fetch('/api/config', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ flipDisplay: isFlipped })
+    });
+
+    if (!response.ok) throw new Error('Failed to set flip display');
+
+    showNotification(`Display ${isFlipped ? 'flipped' : 'normal'}`, 'success');
+    console.log('Flip display:', isFlipped);
+  } catch (error) {
+    console.error('Error setting flip display:', error);
+    showNotification('Error setting flip display', 'error');
+    loadState(); // Reload to restore actual value
+  }
+}
+
+// Handle temperature unit change (Celsius/Fahrenheit)
+async function handleUseFahrenheitChange(event) {
+  const useFahrenheit = event.target.checked;
+
+  try {
+    const response = await fetch('/api/config', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ useFahrenheit: useFahrenheit })
+    });
+
+    if (!response.ok) throw new Error('Failed to set temperature unit');
+
+    showNotification(`Temperature unit: ${useFahrenheit ? '°F' : '°C'}`, 'success');
+    console.log('Use Fahrenheit:', useFahrenheit);
+  } catch (error) {
+    console.error('Error setting temperature unit:', error);
+    showNotification('Error setting temperature unit', 'error');
+    loadState(); // Reload to restore actual value
+  }
+}
+
+// Handle screen rotation enable/disable
+async function handleScreenRotationChange(event) {
+  const enabled = event.target.checked;
+
+  try {
+    const response = await fetch('/api/config', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ enableScreenRotation: enabled })
+    });
+
+    if (!response.ok) throw new Error('Failed to set screen rotation');
+
+    showNotification(`Screen rotation ${enabled ? 'enabled' : 'disabled'}`, 'success');
+    console.log('Screen rotation:', enabled);
+  } catch (error) {
+    console.error('Error setting screen rotation:', error);
+    showNotification('Error setting screen rotation', 'error');
+    loadState(); // Reload to restore actual value
+  }
+}
+
+// Handle screen flip interval change
+async function handleFlipIntervalChange(event) {
+  const interval = parseInt(event.target.value);
+
+  // Validate range
+  if (interval < 3 || interval > 30) {
+    showNotification('Interval must be between 3 and 30 seconds', 'error');
+    loadState(); // Reload to restore actual value
+    return;
+  }
+
+  try {
+    const response = await fetch('/api/config', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ screenFlipInterval: interval })
+    });
+
+    if (!response.ok) throw new Error('Failed to set flip interval');
+
+    showNotification(`Flip interval: ${interval} seconds`, 'success');
+    console.log('Flip interval:', interval);
+  } catch (error) {
+    console.error('Error setting flip interval:', error);
+    showNotification('Error setting flip interval', 'error');
+    loadState(); // Reload to restore actual value
+  }
+}
+
 // Helper: Format bytes in human-readable format
 function formatBytes(bytes) {
   if (bytes >= 1024 * 1024) {
@@ -558,7 +689,8 @@ const LAYOUT = {
     hourMarker: '#FFFFFF',
     hourHand: '#FFFFFF',
     minuteHand: '#FFFFFF',
-    secondHand: '#FF0000'
+    secondHand: '#FF0000',
+    envData: '#C0C0C0'  // Light grey for environmental data (TFT_LIGHTGREY)
   },
   // Display scale factor for WebUI (larger screens get scaled up)
   scale: window.innerWidth >= 600 ? 1.5 : 1.0
@@ -678,6 +810,139 @@ function renderPortrait(data) {
   }
 }
 
+// Render alternate portrait mode display (with analogue clock)
+function renderAlternatePortrait(data) {
+  const L = LAYOUT.portrait;
+  const C = LAYOUT.colors;
+  const clockCenterX = 120;
+  const clockCenterY = 90;  // Shifted up from 110
+  const clockRadius = 55;
+
+  clearCanvas(false);
+
+  // Header: "WORLD CLOCK" title
+  drawText('WORLD CLOCK', L.width / 2, 4, C.title, 16, 'bold', 'center');
+
+  // Header: Date
+  drawText(data.date || '--', L.width / 2, 22, C.time, 14, 'bold', 'center');
+
+  // Draw analogue clock face
+  ctx.strokeStyle = C.clockFace;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(clockCenterX, clockCenterY, clockRadius, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Hour markers (12 positions)
+  for (let i = 0; i < 12; i++) {
+    const angleDeg = i * 30;
+    const angleRad = (angleDeg - 90) * Math.PI / 180;
+    const outerR = clockRadius - 3;
+    const innerR = clockRadius - 8;
+
+    const x1 = clockCenterX + innerR * Math.cos(angleRad);
+    const y1 = clockCenterY + innerR * Math.sin(angleRad);
+    const x2 = clockCenterX + outerR * Math.cos(angleRad);
+    const y2 = clockCenterY + outerR * Math.sin(angleRad);
+
+    ctx.strokeStyle = C.hourMarker;
+    ctx.lineWidth = (i % 3 === 0) ? 2 : 1;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  }
+
+  // Draw clock hands
+  if (data.clock) {
+    const hourAngle = (data.clock.hour % 12) * 30 + data.clock.minute * 0.5;
+    const minuteAngle = data.clock.minute * 6;
+    const secondAngle = data.clock.second * 6;
+
+    drawClockHand(28, hourAngle, C.hourHand, 3);
+    drawClockHand(40, minuteAngle, C.minuteHand, 2);
+    drawClockHand(45, secondAngle, C.secondHand, 1);
+
+    // Center dot
+    ctx.fillStyle = C.hourMarker;
+    ctx.beginPath();
+    ctx.arc(clockCenterX, clockCenterY, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Helper function for clock hands (scoped to alternate portrait)
+  function drawClockHand(length, angleDeg, color, thickness) {
+    const angleRad = (angleDeg - 90) * Math.PI / 180;
+    const x2 = clockCenterX + length * Math.cos(angleRad);
+    const y2 = clockCenterY + length * Math.sin(angleRad);
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth = thickness;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(clockCenterX, clockCenterY);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  }
+
+  // Home city name
+  drawText(data.home?.label || '--', L.width / 2, 150, C.label, 14, 'bold', 'center');
+
+  // HOME indicator
+  drawText('HOME', L.width / 2, 163, C.home, 10, 'normal', 'center');
+
+  // Digital time (smaller font)
+  drawText(data.home?.time || '--:--', L.width / 2, 176, C.time, 14, 'bold', 'center');
+
+  // Prev/Next day indicator
+  if (data.home?.prevDay) {
+    drawText('PREV DAY', L.width / 2, 210, C.prevDay, 9, 'normal', 'center');
+  } else if (data.home?.nextDay) {
+    drawText('NEXT DAY', L.width / 2, 210, C.nextDay, 9, 'normal', 'center');
+  }
+
+  // Environmental data
+  if (data.sensorAvailable && data.envData) {
+    drawText(data.envData, L.width / 2, 196, C.envData, 10, 'normal', 'center');
+  }
+
+  // Draw separator line before remote cities
+  ctx.strokeStyle = '#333333';
+  ctx.beginPath();
+  ctx.moveTo(0, 210);
+  ctx.lineTo(L.width, 210);
+  ctx.stroke();
+
+  // Remote cities (compact format)
+  if (data.remote && data.remote.length > 0) {
+    data.remote.forEach((city, i) => {
+      const rowY = 210 + (i * 17);
+
+      // Separator lines between cities
+      if (i > 0) {
+        ctx.strokeStyle = '#222222';
+        ctx.beginPath();
+        ctx.moveTo(0, rowY);
+        ctx.lineTo(L.width, rowY);
+        ctx.stroke();
+      }
+
+      // City name (left, small font)
+      drawText(city.label || '--', L.pad, rowY + 2, C.label, 9, 'bold');
+
+      // Time (right, medium font)
+      drawText(city.time || '--:--', L.width - L.pad, rowY + 2, C.time, 14, 'bold', 'right');
+
+      // Prev/Next day indicator (second line)
+      if (city.prevDay) {
+        drawText('PREV DAY', L.pad + 8, rowY + 14, C.prevDay, 8, 'normal');
+      } else if (city.nextDay) {
+        drawText('NEXT DAY', L.pad + 8, rowY + 14, C.nextDay, 8, 'normal');
+      }
+    });
+  }
+}
+
 // Draw analog clock face (landscape mode)
 function drawClockFace() {
   const clk = LAYOUT.landscape.clock;
@@ -791,6 +1056,11 @@ function renderLandscape(data) {
     drawText('NEXT DAY', L.leftPanelWidth / 2, 210, C.nextDay, 9, 'normal', 'center');
   }
 
+  // Environmental data (below digital time at y=218, if sensor available)
+  if (data.sensorAvailable && data.envData) {
+    drawText(data.envData, L.leftPanelWidth / 2, 218, C.envData, 9, 'normal', 'center');
+  }
+
   // Vertical separator line
   ctx.strokeStyle = '#333333';
   ctx.lineWidth = 1;
@@ -846,7 +1116,12 @@ function renderClock(data) {
   if (isLandscape) {
     renderLandscape(data);
   } else {
-    renderPortrait(data);
+    // Portrait mode: choose between standard and alternate layouts
+    if (data.showingAlternateScreen && data.sensorAvailable) {
+      renderAlternatePortrait(data);
+    } else {
+      renderPortrait(data);
+    }
   }
 }
 

@@ -11,7 +11,23 @@
 #include <time.h>
 #include <SPI.h>
 #include <XPT2046_Touchscreen.h>
+#include <Wire.h>
+#include "config.h"
 #include "timezones.h"
+
+// Sensor libraries (conditional based on config.h)
+#ifdef USE_BMP280
+  #include <Adafruit_BMP280.h>
+#endif
+#ifdef USE_BME280
+  #include <Adafruit_BME280.h>
+#endif
+#ifdef USE_SHT3X
+  #include <Adafruit_SHT31.h>
+#endif
+#ifdef USE_HTU21D
+  #include <Adafruit_HTU21DF.h>
+#endif
 
 // =========================
 // Debug System
@@ -118,6 +134,28 @@ Preferences prefs;
 SPIClass touchSPI = SPIClass(VSPI);  // Separate SPI bus for touch
 XPT2046_Touchscreen touchscreen(XPT2046_CS, XPT2046_IRQ);
 
+// Sensor objects (only one will be initialized based on config.h)
+#ifdef USE_BMP280
+  Adafruit_BMP280 bmp280;
+#endif
+#ifdef USE_BME280
+  Adafruit_BME280 bme280;
+#endif
+#ifdef USE_SHT3X
+  Adafruit_SHT31 sht3x = Adafruit_SHT31();
+#endif
+#ifdef USE_HTU21D
+  Adafruit_HTU21DF htu21d = Adafruit_HTU21DF();
+#endif
+
+bool sensorAvailable = false;  // Sensor detection flag
+const char* sensorType = "NONE";  // Sensor type name
+
+// Environmental sensor readings (updated periodically)
+float temperature = 0.0;    // Celsius
+float humidity = 0.0;       // Relative humidity (%)
+float pressure = 0.0;       // hPa (hectopascals / millibars)
+
 // Cached WiFi info (updated on connect, prevents String allocation every API call)
 char cachedSSID[33] = "";
 char cachedIP[16] = "";
@@ -157,7 +195,13 @@ bool showingDiagnostics = false;
 unsigned long diagnosticsStartTime = 0;
 const unsigned long DIAGNOSTICS_TIMEOUT = 15000; // 15 seconds
 
-#define FIRMWARE_VERSION "2.5.0"
+// ==================================
+// Portrait Screen Rotation State
+// ==================================
+bool showingAlternateScreen = false;   // Current screen: false=standard, true=alternate
+unsigned long lastScreenFlip = 0;       // Last time screens were flipped
+
+#define FIRMWARE_VERSION "2.9.0"
 #define OTA_HOSTNAME "WorldClock"
 #define OTA_PASSWORD "change-me"  // TODO: Change this!
 
@@ -168,6 +212,10 @@ struct Config {
   char remoteCities[5][32];    // City labels (expanded to 5)
   char remoteTzStrings[5][64]; // Timezone strings (expanded to 5)
   bool landscapeMode;          // Display orientation: true = landscape, false = portrait
+  bool flipDisplay;            // Flip display 180°: allows USB on opposite side
+  bool useFahrenheit;          // Temperature unit: false = Celsius, true = Fahrenheit
+  bool enableScreenRotation;   // Enable alternating screens in portrait mode (default: true)
+  uint8_t screenFlipInterval;  // Seconds between screen flips (default: 8, range: 3-30)
 };
 
 Config config;
@@ -429,6 +477,10 @@ const char *DEFAULT_REMOTE_TZS[] = {
 #define PREF_HOME_TZ "homeTz"
 #define PREF_REMOTE_PREFIX "remote"  // remote0Label, remote0Tz, etc.
 #define PREF_LANDSCAPE "landscape"   // Display orientation: true = landscape
+#define PREF_FLIP "flip"             // Flip display 180°: true = flipped
+#define PREF_FAHRENHEIT "fahrenheit" // Temperature unit: true = Fahrenheit, false = Celsius
+#define PREF_SCREEN_ROTATION "screenRot" // Enable alternating screens in portrait mode
+#define PREF_FLIP_INTERVAL "flipInt"     // Seconds between screen flips (3-30)
 
 // Helper: Extract city name only (strip country after comma)
 // FIXED: Operates on char* instead of String to avoid heap allocation
@@ -440,6 +492,37 @@ void extractCityName(const char* fullLabel, char* outBuf, size_t bufSize) {
     strlcpy(outBuf, fullLabel, copyLen + 1);
   } else {
     strlcpy(outBuf, fullLabel, bufSize);
+  }
+}
+
+// Temperature color coding - User Definable Ranges (in Celsius)
+// Adjust these values to customize temperature color bands
+#define TEMP_FREEZING_MAX 0      // <= 0°C: Freezing (Blue)
+#define TEMP_COLD_MAX 15         // 1-15°C: Cold (Cyan)
+#define TEMP_PLEASANT_MAX 25     // 16-25°C: Pleasant (Green)
+#define TEMP_HOT_MAX 35          // 26-35°C: Hot (Orange)
+                                 // > 35°C: Extreme (Red)
+
+// Temperature display colors
+#define COLOR_TEMP_FREEZING TFT_BLUE      // <= 0°C
+#define COLOR_TEMP_COLD     TFT_CYAN      // 1-15°C
+#define COLOR_TEMP_PLEASANT TFT_GREEN     // 16-25°C
+#define COLOR_TEMP_HOT      TFT_ORANGE    // 26-35°C
+#define COLOR_TEMP_EXTREME  TFT_RED       // > 35°C
+
+// Get temperature display color based on value (in Celsius)
+// Returns appropriate color based on user-defined temperature ranges
+uint16_t getTemperatureColor(float tempCelsius) {
+  if (tempCelsius <= TEMP_FREEZING_MAX) {
+    return COLOR_TEMP_FREEZING;  // Blue for freezing
+  } else if (tempCelsius <= TEMP_COLD_MAX) {
+    return COLOR_TEMP_COLD;      // Cyan for cold
+  } else if (tempCelsius <= TEMP_PLEASANT_MAX) {
+    return COLOR_TEMP_PLEASANT;  // Green for pleasant
+  } else if (tempCelsius <= TEMP_HOT_MAX) {
+    return COLOR_TEMP_HOT;       // Orange for hot
+  } else {
+    return COLOR_TEMP_EXTREME;   // Red for extreme heat
   }
 }
 
@@ -474,12 +557,17 @@ void loadConfig() {
     strlcpy(config.remoteTzStrings[i], tz.c_str(), sizeof(config.remoteTzStrings[i]));
   }
 
-  // Load display orientation
-  config.landscapeMode = prefs.getBool(PREF_LANDSCAPE, false);  // Default: portrait
+  // Load display orientation and temperature unit
+  config.landscapeMode = prefs.getBool(PREF_LANDSCAPE, false);    // Default: portrait
+  config.flipDisplay = prefs.getBool(PREF_FLIP, false);           // Default: not flipped
+  config.useFahrenheit = prefs.getBool(PREF_FAHRENHEIT, false);   // Default: Celsius
+  config.enableScreenRotation = prefs.getBool(PREF_SCREEN_ROTATION, true); // Default: enabled
+  config.screenFlipInterval = prefs.getUChar(PREF_FLIP_INTERVAL, 8);       // Default: 8 seconds
 
   prefs.end();
-  DBG_INFO("Config loaded: Home=%s, Remote0=%s, Landscape=%d\n",
-           config.homeCityLabel, config.remoteCities[0], config.landscapeMode);
+  DBG_INFO("Config loaded: Home=%s, Remote0=%s, Landscape=%d, Flip=%d, °%s\n",
+           config.homeCityLabel, config.remoteCities[0], config.landscapeMode, config.flipDisplay,
+           config.useFahrenheit ? "F" : "C");
 }
 
 // Save configuration to NVS
@@ -492,17 +580,29 @@ void saveConfig() {
     prefs.putString((String(PREF_REMOTE_PREFIX) + i + "Tz").c_str(), config.remoteTzStrings[i]);
   }
   prefs.putBool(PREF_LANDSCAPE, config.landscapeMode);
+  prefs.putBool(PREF_FLIP, config.flipDisplay);
+  prefs.putBool(PREF_FAHRENHEIT, config.useFahrenheit);
+  prefs.putBool(PREF_SCREEN_ROTATION, config.enableScreenRotation);
+  prefs.putUChar(PREF_FLIP_INTERVAL, config.screenFlipInterval);
   prefs.end();
   DBG_INFO("Config saved\n");
 }
 
 // Apply display rotation based on config
+// Rotation values: 0=portrait, 1=landscape, 2=portrait-flipped, 3=landscape-flipped
 void applyRotation() {
-  int rotation = config.landscapeMode ? 1 : 0;
+  int rotation;
+  if (config.landscapeMode) {
+    rotation = config.flipDisplay ? 3 : 1;  // Landscape: 1 normal, 3 flipped
+  } else {
+    rotation = config.flipDisplay ? 2 : 0;  // Portrait: 0 normal, 2 flipped
+  }
   tft.setRotation(rotation);
   touchscreen.setRotation(rotation);
-  DBG_INFO("Display rotation set to %d (%s)\n",
-           rotation, config.landscapeMode ? "landscape" : "portrait");
+  DBG_INFO("Display rotation set to %d (%s%s)\n",
+           rotation,
+           config.landscapeMode ? "landscape" : "portrait",
+           config.flipDisplay ? ", flipped" : "");
 }
 
 // Color palette.
@@ -526,7 +626,7 @@ const int kLandscapeRemoteRowHeight = 48;  // 240 / 5 = 48px per remote city
 
 // Analog clock settings (landscape mode left panel)
 const int kClockCenterX = 60;          // Center of left panel (120/2)
-const int kClockCenterY = 120;         // Centered between date (y~60) and digital time (y=185)
+const int kClockCenterY = 120;         // Centered between date (y~60) and digital time (y=181)
 const int kClockRadius = 50;           // Clock face radius
 const int kHourHandLen = 25;           // Hour hand length
 const int kMinuteHandLen = 35;         // Minute hand length
@@ -548,6 +648,7 @@ const int kFallbackNote = 2;
 // Forward declarations
 void takeScreenshot();
 void takeScreenshotRaw();
+void drawEnvironmentalData();
 
 // Cached state to minimize redraws and flicker.
 // Use fixed char arrays instead of String to avoid heap fragmentation
@@ -728,6 +829,168 @@ int readLDR() {
   return sum / samples;
 }
 
+// Forward declaration
+bool updateSensorData();
+
+// Test and initialize I2C sensor
+// Tries to detect and initialize one of: BMP280, BME280, SHT3X, or HTU21D
+// Returns true if sensor detected and working, false otherwise
+bool testSensor() {
+  Wire.begin(SENSOR_SDA_PIN, SENSOR_SCL_PIN);
+  delay(100);  // Allow I2C bus to stabilize
+  DBG_STEP("Testing I2C sensor...");
+
+#ifdef USE_BMP280
+  // Test BMP280 sensor (Temperature + Pressure)
+  if (bmp280.begin(0x76, 0x58)) {
+    sensorAvailable = true;
+    sensorType = "BMP280";
+    // Configure sensor for weather monitoring
+    bmp280.setSampling(Adafruit_BMP280::MODE_NORMAL,
+                      Adafruit_BMP280::SAMPLING_X2,
+                      Adafruit_BMP280::SAMPLING_X16,
+                      Adafruit_BMP280::FILTER_X16,
+                      Adafruit_BMP280::STANDBY_MS_500);
+    updateSensorData();
+    DBG_INFO("BMP280 OK at 0x76: %.1f°C, %.1f hPa\n", temperature, pressure);
+    return true;
+  } else if (bmp280.begin(0x77, 0x58)) {
+    sensorAvailable = true;
+    sensorType = "BMP280";
+    bmp280.setSampling(Adafruit_BMP280::MODE_NORMAL,
+                      Adafruit_BMP280::SAMPLING_X2,
+                      Adafruit_BMP280::SAMPLING_X16,
+                      Adafruit_BMP280::FILTER_X16,
+                      Adafruit_BMP280::STANDBY_MS_500);
+    updateSensorData();
+    DBG_INFO("BMP280 OK at 0x77: %.1f°C, %.1f hPa\n", temperature, pressure);
+    return true;
+  }
+  DBG_WARN("BMP280 not found at 0x76 or 0x77\n");
+
+#elif defined(USE_BME280)
+  // Test BME280 sensor (Temperature + Humidity + Pressure)
+  if (bme280.begin(0x76, &Wire)) {
+    sensorAvailable = true;
+    sensorType = "BME280";
+    bme280.setSampling(Adafruit_BME280::MODE_FORCED,
+                      Adafruit_BME280::SAMPLING_X1,
+                      Adafruit_BME280::SAMPLING_X1,
+                      Adafruit_BME280::SAMPLING_X1,
+                      Adafruit_BME280::FILTER_OFF);
+    updateSensorData();
+    DBG_INFO("BME280 OK at 0x76: %.1f°C, %.1f%%, %.1f hPa\n", temperature, humidity, pressure);
+    return true;
+  } else if (bme280.begin(0x77, &Wire)) {
+    sensorAvailable = true;
+    sensorType = "BME280";
+    bme280.setSampling(Adafruit_BME280::MODE_FORCED,
+                      Adafruit_BME280::SAMPLING_X1,
+                      Adafruit_BME280::SAMPLING_X1,
+                      Adafruit_BME280::SAMPLING_X1,
+                      Adafruit_BME280::FILTER_OFF);
+    updateSensorData();
+    DBG_INFO("BME280 OK at 0x77: %.1f°C, %.1f%%, %.1f hPa\n", temperature, humidity, pressure);
+    return true;
+  }
+  DBG_WARN("BME280 not found at 0x76 or 0x77\n");
+
+#elif defined(USE_SHT3X)
+  // Test SHT3X sensor (Temperature + Humidity)
+  if (sht3x.begin(0x44)) {
+    sensorAvailable = true;
+    sensorType = "SHT3X";
+    updateSensorData();
+    DBG_INFO("SHT3X OK at 0x44: %.1f°C, %.1f%%\n", temperature, humidity);
+    return true;
+  } else if (sht3x.begin(0x45)) {
+    sensorAvailable = true;
+    sensorType = "SHT3X";
+    updateSensorData();
+    DBG_INFO("SHT3X OK at 0x45: %.1f°C, %.1f%%\n", temperature, humidity);
+    return true;
+  }
+  DBG_WARN("SHT3X not found at 0x44 or 0x45\n");
+
+#elif defined(USE_HTU21D)
+  // Test HTU21D sensor (Temperature + Humidity)
+  if (htu21d.begin()) {
+    sensorAvailable = true;
+    sensorType = "HTU21D";
+    updateSensorData();
+    DBG_INFO("HTU21D OK at 0x40: %.1f°C, %.1f%%\n", temperature, humidity);
+    return true;
+  }
+  DBG_WARN("HTU21D not found at 0x40\n");
+
+#else
+  DBG_WARN("No sensor type defined in config.h\n");
+#endif
+
+  return false;
+}
+
+// Read sensor data - updates global temperature, humidity, and pressure variables
+// Supports BMP280, BME280, SHT3X, and HTU21D sensors
+// Returns true if reading successful, false otherwise
+bool updateSensorData() {
+  if (!sensorAvailable) {
+    return false;
+  }
+
+  float newTemp = NAN;
+  float newHumidity = NAN;
+  float newPressure = NAN;
+
+#ifdef USE_BMP280
+  // BMP280: Temperature + Pressure
+  newTemp = bmp280.readTemperature();
+  newPressure = bmp280.readPressure() / 100.0;  // Convert Pa to hPa
+#elif defined(USE_BME280)
+  // BME280: Temperature + Humidity + Pressure
+  bme280.takeForcedMeasurement();
+  newTemp = bme280.readTemperature();
+  newHumidity = bme280.readHumidity();
+  newPressure = bme280.readPressure() / 100.0;  // Convert Pa to hPa
+#elif defined(USE_SHT3X)
+  // SHT3X: Temperature + Humidity
+  newTemp = sht3x.readTemperature();
+  newHumidity = sht3x.readHumidity();
+#elif defined(USE_HTU21D)
+  // HTU21D: Temperature + Humidity
+  newTemp = htu21d.readTemperature();
+  newHumidity = htu21d.readHumidity();
+#endif
+
+  // Validate and update temperature
+  if (!isnan(newTemp) && newTemp >= -50 && newTemp <= 100) {
+    temperature = newTemp;
+  } else {
+    DBG_WARN("Sensor temperature reading invalid: %.1f°C\n", newTemp);
+    return false;
+  }
+
+  // Validate and update humidity (if available)
+  if (!isnan(newHumidity)) {
+    if (newHumidity >= 0 && newHumidity <= 100) {
+      humidity = newHumidity;
+    } else {
+      DBG_WARN("Sensor humidity reading invalid: %.1f%%\n", newHumidity);
+    }
+  }
+
+  // Validate and update pressure (if available)
+  if (!isnan(newPressure)) {
+    if (newPressure >= 300 && newPressure <= 1200) {
+      pressure = newPressure;
+    } else {
+      DBG_WARN("Sensor pressure reading invalid: %.1f hPa\n", newPressure);
+    }
+  }
+
+  return true;
+}
+
 // Optional: list files on LittleFS to confirm fonts are present.
 void logLittleFSContents() {
   if (!smoothFontsReady) {
@@ -846,24 +1109,25 @@ TimeInfo formatTime(int cityIndex) {
 
 // Draw static layout for portrait mode (240x320)
 void drawStaticLayoutPortrait() {
-  // Draw centered "WORLD CLOCK" title on first row
+  // Title uses bitmap font for speed (rarely changes)
   tft.setTextColor(COLOR_LABEL, COLOR_BG);
-  setFont(kFontHeader, kFallbackHeader);
+  tft.setTextFont(2);  // Bitmap font for title
   tft.setTextDatum(MC_DATUM);
   tft.drawString("WORLD CLOCK", tft.width() / 2, kTitleHeight / 2 + 4);
 
   int rows = 6;  // Home + 5 remote cities
   int rowHeight = (tft.height() - kHeaderHeight) / rows;
 
-  // Draw city labels starting below header
+  // Use smooth fonts for city labels to match dynamic updates
   setFont(kFontLabel, kFallbackLabel);
   tft.setTextDatum(TL_DATUM);
 
   // Home city (row 0) with "Home" label
   int rowTop = kHeaderHeight;
+  tft.setTextColor(COLOR_LABEL, COLOR_BG);
   tft.drawString(config.homeCityLabel, kPad, rowTop + 2);
 
-  // Add small "Home" label beneath city name
+  // Add small "HOME" label beneath city name
   setFont(kFontNote, kFallbackNote);
   tft.setTextColor(TFT_CYAN, COLOR_BG);
   tft.drawString("HOME", kPad, rowTop + 2 + tft.fontHeight() + 4);
@@ -881,24 +1145,21 @@ void drawStaticLayoutPortrait() {
 }
 
 // Draw static layout for landscape mode (320x240)
-// Left panel (120px): City name, HOME, date, analog clock, digital time
+// Left panel (120px): City name, HOME, date, analog clock, digital time, environmental data
 // Right panel (200px): 5 remote cities stacked vertically with times
 void drawStaticLayoutLandscape() {
-  // LEFT PANEL layout: City (y=6) → HOME (y=30) → Date (y=48) → Clock (y=120) → Time (y=185)
+  // PERFORMANCE: Use fast bitmap fonts for static elements
+  // LEFT PANEL layout: City (y=6) → HOME (y=30) → Date (y=48) → Clock (y=120) → Time (y=181) → Env (y=218)
 
   // Home city label (at top) - use smaller font for long names (>9 chars)
   int cityLen = strlen(config.homeCityLabel);
-  if (cityLen > 9) {
-    setFont(kFontNote, kFallbackNote);  // Smaller font for long names
-  } else {
-    setFont(kFontLabel, kFallbackLabel);
-  }
+  tft.setTextFont(cityLen > 9 ? 2 : 4);  // Bitmap fonts
   tft.setTextDatum(TC_DATUM);
   tft.setTextColor(COLOR_LABEL, COLOR_BG);
   tft.drawString(config.homeCityLabel, kLeftPanelWidth / 2, 6);
 
   // "HOME" indicator below city name
-  setFont(kFontNote, kFallbackNote);
+  tft.setTextFont(2);  // Bitmap font
   tft.setTextColor(TFT_CYAN, COLOR_BG);
   tft.setTextDatum(TC_DATUM);
   tft.drawString("HOME", kLeftPanelWidth / 2, 30);
@@ -908,25 +1169,33 @@ void drawStaticLayoutLandscape() {
   // Draw analog clock face (centered at y=120)
   drawAnalogClockFace();
 
-  // Digital time will be drawn by drawTimesLandscape() at Y=185
+  // Digital time will be drawn by drawTimesLandscape() at y=181
+  // Environmental data will be drawn by drawEnvironmentalData() at y=218
 
   // Divider line between left and right panels
   tft.drawFastVLine(kLeftPanelWidth - 1, 0, tft.height(), TFT_DARKGREY);
 
   // RIGHT PANEL: 5 Remote Cities (no horizontal lines)
+  // PERFORMANCE: Use bitmap fonts, batch by size to minimize font changes
   tft.setTextColor(COLOR_LABEL, COLOR_BG);
   tft.setTextDatum(TL_DATUM);
 
+  // Pass 1: Draw short city names with font 4
+  tft.setTextFont(4);  // Bitmap font
   for (int i = 0; i < 5; i++) {
-    int rowY = i * kLandscapeRemoteRowHeight + 2;  // City at top of row
-    // Use smaller font for long city names (>9 chars)
-    int remoteCityLen = strlen(config.remoteCities[i]);
-    if (remoteCityLen > 9) {
-      setFont(kFontNote, kFallbackNote);
-    } else {
-      setFont(kFontLabel, kFallbackLabel);
+    if (strlen(config.remoteCities[i]) <= 9) {
+      int rowY = i * kLandscapeRemoteRowHeight + 2;
+      tft.drawString(config.remoteCities[i], kLeftPanelWidth + kPad, rowY);
     }
-    tft.drawString(config.remoteCities[i], kLeftPanelWidth + kPad, rowY);
+  }
+
+  // Pass 2: Draw long city names with font 2 (one font switch)
+  tft.setTextFont(2);  // Smaller bitmap font
+  for (int i = 0; i < 5; i++) {
+    if (strlen(config.remoteCities[i]) > 9) {
+      int rowY = i * kLandscapeRemoteRowHeight + 2;
+      tft.drawString(config.remoteCities[i], kLeftPanelWidth + kPad, rowY);
+    }
   }
 }
 
@@ -939,11 +1208,60 @@ void drawStaticLayout() {
   } else {
     drawStaticLayoutPortrait();
   }
+
+  // Draw environmental data (landscape mode only, if sensor available)
+  drawEnvironmentalData();
 }
 
 // Draw or update the header date string.
+// Draw environmental sensor data in landscape mode (left panel)
+// Only draws if sensor is available and in landscape mode
+// Positioned below digital time (y=218)
+void drawEnvironmentalData() {
+  if (!config.landscapeMode || !sensorAvailable) {
+    return;  // Only show in landscape mode when sensor available
+  }
+
+  int displayTemp = config.useFahrenheit ? (int)(temperature * 9.0 / 5.0 + 32) : (int)temperature;
+  const char* tempUnit = config.useFahrenheit ? "o""F" : "o""C";  // °F or °C
+
+  char envStr[40];
+
+  // Handle negative temperatures
+  char tempStr[12];
+  if (displayTemp < 0) {
+    snprintf(tempStr, sizeof(tempStr), "-%d%s", abs(displayTemp), tempUnit);
+  } else {
+    snprintf(tempStr, sizeof(tempStr), "%d%s", displayTemp, tempUnit);
+  }
+
+#if defined(USE_BME280)
+  // BME280: Temperature + Humidity + Pressure
+  snprintf(envStr, sizeof(envStr), "%s %d%% %dhPa", tempStr, (int)humidity, (int)pressure);
+#elif defined(USE_BMP280)
+  // BMP280: Temperature + Pressure
+  snprintf(envStr, sizeof(envStr), "%s  %dhPa", tempStr, (int)pressure);
+#else
+  // SHT3X or HTU21D: Temperature + Humidity
+  snprintf(envStr, sizeof(envStr), "%s  %d%%", tempStr, (int)humidity);
+#endif
+
+  // Draw below digital time (time at y=181, this at y=218)
+  int envY = 218;
+  tft.setTextFont(2);  // Bitmap font for faster rendering
+
+  // Get temperature color (always use Celsius for color determination)
+  uint16_t tempColor = getTemperatureColor(temperature);
+  tft.setTextColor(tempColor, COLOR_BG);
+  tft.setTextDatum(TC_DATUM);
+  tft.setTextPadding(tft.textWidth("888o""F 888% 8888hPa"));  // Padding to clear old text
+  tft.drawString(envStr, kLeftPanelWidth / 2, envY);
+  tft.setTextPadding(0);  // Reset padding
+}
+
 void drawHeaderDate(const char *dateStr) {
-  setFont(kFontHeader, kFallbackHeader);
+  // PERFORMANCE: Use bitmap font for static date element
+  tft.setTextFont(2);  // Bitmap font
   tft.setTextColor(COLOR_TIME, COLOR_BG);
 
   if (config.landscapeMode) {
@@ -964,13 +1282,11 @@ void drawTimesPortrait() {
   int rows = 6;  // Home + 5 remote cities
   int rowHeight = (tft.height() - kHeaderHeight) / rows;
 
+  // Load time font once before loop
   setFont(kFontTime, kFallbackTime);
   if (timePadWidth == 0) {
     timePadWidth = tft.textWidth("88:88");
   }
-  tft.setTextPadding(timePadWidth);
-  tft.setTextColor(COLOR_TIME, COLOR_BG);
-  tft.setTextDatum(TR_DATUM);
 
   // Helper to get city label by index
   auto getLabelByIndex = [](int i) -> const char* {
@@ -979,7 +1295,6 @@ void drawTimesPortrait() {
   };
 
   for (int i = 0; i < rows; ++i) {
-    tft.setTextPadding(timePadWidth);
     TimeInfo info = formatTime(i);
     bool timeChanged = (strcmp(info.timeStr, lastTimes[i]) != 0);
     bool prevDayChanged = (info.prevDay != lastPrevDay[i]);
@@ -992,11 +1307,10 @@ void drawTimesPortrait() {
     int rowTop = kHeaderHeight + i * rowHeight;
     int timeY = rowTop + 2;
 
+    // Draw time (font already loaded before loop)
     if (timeChanged || prevDayChanged || nextDayChanged || colonChanged) {
-      setFont(kFontTime, kFallbackTime);
-      int timeWidth = tft.textWidth("88:88");
-      int clearX = (tft.width() - kPad) - timeWidth - 2;
-      tft.fillRect(clearX, timeY, timeWidth + 4, tft.fontHeight(), COLOR_BG);
+      tft.setTextPadding(timePadWidth);
+      tft.setTextColor(COLOR_TIME, COLOR_BG);
       tft.setTextDatum(TR_DATUM);
 
       // Build time string with colon or space for blinking
@@ -1008,27 +1322,25 @@ void drawTimesPortrait() {
       tft.drawString(displayTime, tft.width() - kPad, timeY);
     }
 
+    // Draw labels and day indicators (only switch fonts when needed)
     if (prevDayChanged || nextDayChanged) {
       int labelClearWidth = tft.width() / 2 - kPad - 4;
       tft.fillRect(kPad, rowTop, labelClearWidth, rowHeight, COLOR_BG);
+
       setFont(kFontLabel, kFallbackLabel);
       tft.setTextColor(COLOR_LABEL, COLOR_BG);
       tft.setTextDatum(TL_DATUM);
       tft.drawString(getLabelByIndex(i), kPad, rowTop + 2);
-      if (info.prevDay) {
+
+      if (info.prevDay || info.nextDay) {
         setFont(kFontNote, kFallbackNote);
-        tft.setTextColor(TFT_YELLOW, COLOR_BG);
-        tft.drawString("Prev Day", kPad, rowTop + 2 + tft.fontHeight() + 2);
-      } else if (info.nextDay) {
-        setFont(kFontNote, kFallbackNote);
-        tft.setTextColor(TFT_CYAN, COLOR_BG);
-        tft.drawString("Next Day", kPad, rowTop + 2 + tft.fontHeight() + 2);
+        tft.setTextColor(info.prevDay ? TFT_YELLOW : TFT_CYAN, COLOR_BG);
+        tft.drawString(info.prevDay ? "Prev Day" : "Next Day", kPad, rowTop + 2 + tft.fontHeight() + 2);
+        // Restore time font for next iteration
+        setFont(kFontTime, kFallbackTime);
       }
     }
 
-    setFont(kFontTime, kFallbackTime);
-    tft.setTextColor(COLOR_TIME, COLOR_BG);
-    tft.setTextDatum(TR_DATUM);
     strlcpy(lastTimes[i], info.timeStr, sizeof(lastTimes[i]));
     lastPrevDay[i] = info.prevDay;
     lastNextDay[i] = info.nextDay;
@@ -1040,6 +1352,7 @@ void drawTimesPortrait() {
 // Left panel: Analog clock + digital time below
 // Right panel: Times right-aligned, PREV DAY tiny below city label
 void drawTimesLandscape() {
+  // Load time font once before any time drawing
   setFont(kFontTime, kFallbackTime);
   if (timePadWidth == 0) {
     timePadWidth = tft.textWidth("88:88");
@@ -1054,19 +1367,18 @@ void drawTimesLandscape() {
   updateAnalogClockHands(homeTm.tm_hour, homeTm.tm_min, homeTm.tm_sec);
 
   // HOME CITY DIGITAL TIME (left panel, below analog clock)
+  // Font already loaded above
   {
     TimeInfo info = formatTime(0);
     bool timeChanged = (strcmp(info.timeStr, lastTimes[0]) != 0);
     bool colonChanged = (info.showColon != lastColonState[0]);
 
     if (timeChanged || colonChanged) {
-      int homeTimeY = 185;  // Below analog clock (center Y=120, radius=50)
+      int homeTimeY = 181;  // Below analog clock (center Y=120, radius=50), moved up 4px for sensor data
 
-      setFont(kFontTime, kFallbackTime);
+      tft.setTextPadding(timePadWidth);
       tft.setTextColor(COLOR_TIME, COLOR_BG);
       tft.setTextDatum(TC_DATUM);
-      // Clear home time area
-      tft.fillRect(kPad, homeTimeY, kLeftPanelWidth - kPad * 2 - 2, 30, COLOR_BG);
 
       // Build time string with colon or space for blinking
       char displayTime[8];
@@ -1111,25 +1423,19 @@ void drawTimesLandscape() {
       tft.setTextDatum(TL_DATUM);
       tft.drawString(config.remoteCities[i], kLeftPanelWidth + kPad, cityLabelY);
 
-      // Draw PREV DAY or NEXT DAY indicator
-      if (info.prevDay) {
+      // Draw PREV DAY or NEXT DAY indicator (only switch font once)
+      if (info.prevDay || info.nextDay) {
         setFont(kFontNote, kFallbackNote);
-        tft.setTextColor(TFT_YELLOW, COLOR_BG);
+        tft.setTextColor(info.prevDay ? TFT_YELLOW : TFT_CYAN, COLOR_BG);
         tft.setTextDatum(TL_DATUM);
-        tft.drawString("PREV DAY", kLeftPanelWidth + kPad, cityLabelY + tft.fontHeight() + 2);
-      } else if (info.nextDay) {
-        setFont(kFontNote, kFallbackNote);
-        tft.setTextColor(TFT_CYAN, COLOR_BG);
-        tft.setTextDatum(TL_DATUM);
-        tft.drawString("NEXT DAY", kLeftPanelWidth + kPad, cityLabelY + tft.fontHeight() + 2);
+        tft.drawString(info.prevDay ? "PREV DAY" : "NEXT DAY", kLeftPanelWidth + kPad, cityLabelY + tft.fontHeight() + 2);
       }
     }
 
+    // Draw time right-aligned (font already loaded before loop)
     if (timeChanged || colonChanged) {
-      // Draw time right-aligned (with colon or space for blinking)
       setFont(kFontTime, kFallbackTime);
-      int timeWidth = tft.textWidth("88:88");
-      tft.fillRect(tft.width() - 6 - timeWidth - 2, timeY, timeWidth + 4, tft.fontHeight(), COLOR_BG);
+      tft.setTextPadding(timePadWidth);
       tft.setTextColor(COLOR_TIME, COLOR_BG);
       tft.setTextDatum(TR_DATUM);
 
@@ -1157,6 +1463,303 @@ void drawTimes() {
   } else {
     drawTimesPortrait();
   }
+}
+
+// =========================
+// Alternate Portrait Screen (with Analogue Clock + Environmental Data)
+// =========================
+// This screen alternates with the standard portrait screen when environmental
+// sensor is available and screen rotation is enabled.
+//
+// Layout (240x320):
+// - Header: "Home: CITYNAME" centered (y=4)
+// - Home time: Large, centered on right side (y=30)
+// - Analogue clock (left, center at 60,80) + Sensor data (right, y=70-98)
+// - Clock bottom edge at y=135 (no cropping)
+// - Sensor data always shown (Temp, Hum, Press) with "n/a" when unavailable
+// - Remote cities: 2-line format (y=137-320, 5 cities × 37px)
+// - Day indicators ("Prev Day"/"Next Day") directly below city name, no indent
+// - No separator lines between cities
+
+// Draw static layout for alternate portrait screen
+void drawAlternatePortraitStatic() {
+  tft.fillScreen(COLOR_BG);
+
+  // Draw analogue clock face (top-left position)
+  const int clockCenterX = 60;
+  const int clockCenterY = 80;
+  const int clockRadius = 55;
+
+  // Clock face circle
+  tft.drawCircle(clockCenterX, clockCenterY, clockRadius, TFT_DARKGREY);
+
+  // Hour markers (12 positions)
+  for (int i = 0; i < 12; i++) {
+    float angleDeg = i * 30.0f;
+    float angleRad = (angleDeg - 90.0f) * PI / 180.0f;
+    int outerR = clockRadius - 3;
+    int innerR = clockRadius - 8;
+    int x1 = clockCenterX + innerR * cos(angleRad);
+    int y1 = clockCenterY + innerR * sin(angleRad);
+    int x2 = clockCenterX + outerR * cos(angleRad);
+    int y2 = clockCenterY + outerR * sin(angleRad);
+
+    // Thicker markers at 12, 3, 6, 9
+    int thickness = (i % 3 == 0) ? 2 : 1;
+    for (int t = 0; t < thickness; t++) {
+      tft.drawLine(x1, y1 + t, x2, y2 + t, TFT_WHITE);
+    }
+  }
+
+  DBG_VERBOSE("Alternate portrait static layout drawn\n");
+}
+
+// Update dynamic elements of alternate portrait screen
+void drawAlternatePortraitUpdate() {
+  // CRITICAL: Unload any smooth font from previous screen before drawing anything
+  if (currentSmoothFont != nullptr) {
+    tft.unloadFont();
+    currentSmoothFont = nullptr;
+  }
+
+  time_t now = time(nullptr);
+
+  // Clock constants (top-left position)
+  const int clockCenterX = 60;
+  const int clockCenterY = 80;
+  const int hourHandLen = 28;
+  const int minuteHandLen = 40;
+  const int secondHandLen = 45;
+
+  // === HOME CITY LABEL (Top center) ===
+  struct tm homeTm;
+  getLocalTimeNoSetenv(now, &parsedTz[0], &homeTm);
+
+  // === HOME CITY HEADER ===
+  char homeLabel[48];
+  snprintf(homeLabel, sizeof(homeLabel), "Home: %s", config.homeCityLabel);
+
+  setFont(kFontLabel, kFallbackLabel);  // Smooth font to match remote cities
+  tft.setTextColor(TFT_CYAN, COLOR_BG);
+  tft.setTextDatum(TC_DATUM);
+  tft.setTextPadding(180);
+  tft.drawString(homeLabel, tft.width() / 2, 4);
+
+  // === ANALOGUE CLOCK (Update hands every second) ===
+  int currentSecond = homeTm.tm_sec;
+  int currentMinute = homeTm.tm_min;
+  int currentHour = homeTm.tm_hour;
+
+  if (currentSecond != lastSecond || currentMinute != lastMinute || currentHour != lastHour) {
+    // Erase old hands (draw in background color)
+    if (lastSecond >= 0) {
+      float oldSecondAngle = lastSecond * 6.0f;
+      float oldMinuteAngle = lastMinute * 6.0f;
+      float oldHourAngle = (lastHour % 12) * 30.0f + lastMinute * 0.5f;
+
+      drawClockHand(clockCenterX, clockCenterY, secondHandLen, oldSecondAngle, COLOR_BG, 1);
+      drawClockHand(clockCenterX, clockCenterY, minuteHandLen, oldMinuteAngle, COLOR_BG, 2);
+      drawClockHand(clockCenterX, clockCenterY, hourHandLen, oldHourAngle, COLOR_BG, 3);
+    }
+
+    // Draw new hands
+    float secondAngle = currentSecond * 6.0f;
+    float minuteAngle = currentMinute * 6.0f;
+    float hourAngle = (currentHour % 12) * 30.0f + currentMinute * 0.5f;
+
+    drawClockHand(clockCenterX, clockCenterY, hourHandLen, hourAngle, TFT_WHITE, 3);
+    drawClockHand(clockCenterX, clockCenterY, minuteHandLen, minuteAngle, TFT_WHITE, 2);
+    drawClockHand(clockCenterX, clockCenterY, secondHandLen, secondAngle, TFT_RED, 1);
+
+    // Center dot
+    tft.fillCircle(clockCenterX, clockCenterY, 3, TFT_WHITE);
+
+    lastSecond = currentSecond;
+    lastMinute = currentMinute;
+    lastHour = currentHour;
+  }
+
+  // === HOME TIME + ENVIRONMENTAL DATA (Right side, centered on clock axis) ===
+
+  // === HOME CITY DIGITAL TIME (Right side, top, centered) ===
+  TimeInfo homeInfo = formatTime(0);
+  bool timeChanged = (strcmp(homeInfo.timeStr, lastTimes[0]) != 0);
+  bool colonChanged = (homeInfo.showColon != lastColonState[0]);
+
+  if (timeChanged || colonChanged) {
+    int timeY = 30;
+
+    setFont(kFontTime, kFallbackTime);
+    tft.setTextColor(COLOR_TIME, COLOR_BG);
+    tft.setTextDatum(TC_DATUM);  // Top-center alignment
+    tft.setTextPadding(tft.textWidth("88:88"));
+    tft.drawString(homeInfo.timeStr, 180, timeY);  // Centered on right side
+
+    strlcpy(lastTimes[0], homeInfo.timeStr, sizeof(lastTimes[0]));
+    lastColonState[0] = homeInfo.showColon;
+  }
+
+  // === ENVIRONMENTAL DATA (Right side, below home time) ===
+  int sensorX = 130;
+  int sensorYStart = 70;  // Below home time, moved down to avoid overlap
+
+  // CRITICAL: Unload smooth font and switch to environmental data font
+  if (currentSmoothFont != nullptr) {
+    tft.unloadFont();
+    currentSmoothFont = nullptr;
+  }
+  // Use medium smooth font for readable display, centered alignment
+  setFont(kFontLabel, kFallbackLabel);
+  tft.setTextDatum(TC_DATUM);  // Top-center alignment
+  int centerX = 180;  // Center on right side (align with home time)
+  tft.setTextPadding(tft.textWidth("P 8888hPa"));  // Enough for widest string
+
+  // Temperature (abbreviated format: T 29oC or T n/a)
+  char tempStr[16];
+  if (sensorAvailable) {
+    int displayTemp = config.useFahrenheit ? (int)(temperature * 9.0 / 5.0 + 32) : (int)temperature;
+    const char* tempUnit = config.useFahrenheit ? "o""F" : "o""C";
+
+    // Handle negative temperatures (with space after T)
+    if (displayTemp < 0) {
+      snprintf(tempStr, sizeof(tempStr), "T -%d%s", abs(displayTemp), tempUnit);
+    } else {
+      snprintf(tempStr, sizeof(tempStr), "T %d%s", displayTemp, tempUnit);
+    }
+
+    // Get color based on temperature (always use Celsius for color determination)
+    uint16_t tempColor = getTemperatureColor(temperature);
+    tft.setTextColor(tempColor, COLOR_BG);
+  } else {
+    snprintf(tempStr, sizeof(tempStr), "T n/a");
+    tft.setTextColor(TFT_LIGHTGREY, COLOR_BG);
+  }
+  tft.drawString(tempStr, centerX, sensorYStart);
+
+  // Humidity (abbreviated format: H 65% or H n/a)
+  char humStr[16];
+  tft.setTextColor(TFT_LIGHTGREY, COLOR_BG);
+#if defined(USE_BME280) || defined(USE_SHT3X) || defined(USE_HTU21D)
+  if (sensorAvailable) {
+    snprintf(humStr, sizeof(humStr), "H %d%%", (int)humidity);
+  } else {
+    snprintf(humStr, sizeof(humStr), "H n/a");
+  }
+#else
+  snprintf(humStr, sizeof(humStr), "H n/a");
+#endif
+  tft.drawString(humStr, centerX, sensorYStart + 18);  // More spacing for larger font
+
+  // Pressure (abbreviated format: P 1005hPa or P n/a)
+  char presStr[16];
+  tft.setTextColor(TFT_LIGHTGREY, COLOR_BG);
+#if defined(USE_BME280) || defined(USE_BMP280)
+  if (sensorAvailable) {
+    snprintf(presStr, sizeof(presStr), "P %dhPa", (int)pressure);
+  } else {
+    snprintf(presStr, sizeof(presStr), "P n/a");
+  }
+#else
+  snprintf(presStr, sizeof(presStr), "P n/a");
+#endif
+  tft.drawString(presStr, centerX, sensorYStart + 36);  // More spacing for larger font
+
+  // === REMOTE CITIES (Compact format) ===
+  // PERFORMANCE OPTIMIZATION: Batch drawing by font type to minimize font switching
+  // Instead of switching fonts for each city (10 switches), we draw in passes (2 switches total)
+
+  // First, collect what needs to be drawn for each city
+  struct CityDrawInfo {
+    bool needsUpdate;
+    int rowY;
+    int cityY;
+    int cityFontHeight;
+    TimeInfo info;
+    bool isPrevDay;
+    bool isNextDay;
+  };
+  CityDrawInfo cityDrawInfo[5];
+
+  for (int i = 0; i < 5; i++) {
+    int cityIdx = i + 1;
+    cityDrawInfo[i].rowY = 137 + (i * 37);
+    cityDrawInfo[i].cityY = cityDrawInfo[i].rowY + 4;
+
+    TimeInfo remoteInfo = formatTime(cityIdx);
+    bool remoteTimeChanged = (strcmp(remoteInfo.timeStr, lastTimes[cityIdx]) != 0);
+    bool remoteColonChanged = (remoteInfo.showColon != lastColonState[cityIdx]);
+
+    // Get day comparison for prev/next day indicators
+    struct tm remoteTm;
+    getLocalTimeNoSetenv(now, &parsedTz[cityIdx], &remoteTm);
+    bool isPrevDay = (remoteTm.tm_year < homeTm.tm_year) ||
+                     (remoteTm.tm_year == homeTm.tm_year && remoteTm.tm_yday < homeTm.tm_yday);
+    bool isNextDay = (remoteTm.tm_year > homeTm.tm_year) ||
+                     (remoteTm.tm_year == homeTm.tm_year && remoteTm.tm_yday > homeTm.tm_yday);
+
+    bool dayChanged = (isPrevDay != lastPrevDay[cityIdx]) || (isNextDay != lastNextDay[cityIdx]);
+
+    cityDrawInfo[i].needsUpdate = (remoteTimeChanged || remoteColonChanged || dayChanged);
+    cityDrawInfo[i].info = remoteInfo;
+    cityDrawInfo[i].isPrevDay = isPrevDay;
+    cityDrawInfo[i].isNextDay = isNextDay;
+
+    // Update cache
+    if (cityDrawInfo[i].needsUpdate) {
+      strlcpy(lastTimes[cityIdx], remoteInfo.timeStr, sizeof(lastTimes[cityIdx]));
+      lastColonState[cityIdx] = remoteInfo.showColon;
+      lastPrevDay[cityIdx] = isPrevDay;
+      lastNextDay[cityIdx] = isNextDay;
+    }
+  }
+
+  // PASS 1: Draw city names with kFontNote (already loaded above for env data)
+  setFont(kFontNote, kFallbackNote);
+  int cityFontHeight = tft.fontHeight();  // Get font height once
+  tft.setTextColor(COLOR_LABEL, COLOR_BG);
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextPadding(120);
+
+  for (int i = 0; i < 5; i++) {
+    if (cityDrawInfo[i].needsUpdate) {
+      tft.drawString(config.remoteCities[i], kPad, cityDrawInfo[i].cityY);
+      cityDrawInfo[i].cityFontHeight = cityFontHeight;
+    }
+  }
+
+  // PASS 2: Draw times with kFontLabel (one font switch)
+  setFont(kFontLabel, kFallbackLabel);
+  tft.setTextColor(COLOR_TIME, COLOR_BG);
+  tft.setTextDatum(TR_DATUM);
+  tft.setTextPadding(tft.textWidth("88:88"));
+
+  for (int i = 0; i < 5; i++) {
+    if (cityDrawInfo[i].needsUpdate) {
+      tft.drawString(cityDrawInfo[i].info.timeStr, tft.width() - kPad, cityDrawInfo[i].rowY + 4);
+    }
+  }
+
+  // PASS 3: Draw day indicators with kFontNote (one font switch)
+  setFont(kFontNote, kFallbackNote);
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextPadding(100);
+
+  for (int i = 0; i < 5; i++) {
+    if (cityDrawInfo[i].needsUpdate) {
+      if (cityDrawInfo[i].isPrevDay) {
+        tft.setTextColor(TFT_YELLOW, COLOR_BG);
+        tft.drawString("Prev Day", kPad, cityDrawInfo[i].cityY + cityDrawInfo[i].cityFontHeight + 2);
+      } else if (cityDrawInfo[i].isNextDay) {
+        tft.setTextColor(TFT_CYAN, COLOR_BG);
+        tft.drawString("Next Day", kPad, cityDrawInfo[i].cityY + cityDrawInfo[i].cityFontHeight + 2);
+      } else {
+        // Clear indicator if day matches
+        tft.fillRect(kPad, cityDrawInfo[i].cityY + cityDrawInfo[i].cityFontHeight + 2, 100, 10, COLOR_BG);
+      }
+    }
+  }
+
+  DBG_VERBOSE("Alternate portrait screen updated\n");
 }
 
 // =========================
@@ -1352,6 +1955,26 @@ void handleGetState() {
   doc["debugLevel"] = debugLevel;
   doc["ldrValue"] = readLDR();
   doc["landscapeMode"] = config.landscapeMode;
+  doc["flipDisplay"] = config.flipDisplay;
+  doc["enableScreenRotation"] = config.enableScreenRotation;
+  doc["screenFlipInterval"] = config.screenFlipInterval;
+  doc["showingAlternateScreen"] = showingAlternateScreen;
+
+  // Environmental sensor data
+  doc["sensorAvailable"] = sensorAvailable;
+  doc["sensorType"] = sensorType;
+  doc["useFahrenheit"] = config.useFahrenheit;
+  if (sensorAvailable) {
+    int displayTemp = config.useFahrenheit ? (int)(temperature * 9.0 / 5.0 + 32) : (int)temperature;
+    doc["temperature"] = displayTemp;
+    doc["temperatureRaw"] = serialized(String(temperature, 1));  // Always Celsius
+#if defined(USE_BME280) || defined(USE_SHT3X) || defined(USE_HTU21D)
+    doc["humidity"] = serialized(String(humidity, 0));  // No decimal places
+#endif
+#if defined(USE_BME280) || defined(USE_BMP280)
+    doc["pressure"] = serialized(String(pressure, 1));  // 1 decimal place
+#endif
+  }
 
   // WiFi info - use cached values to avoid String allocations
   doc["wifi_ssid"] = cachedSSID;
@@ -1481,6 +2104,46 @@ void handlePostConfig() {
     }
   }
 
+  // Parse flip display option
+  if (!doc["flipDisplay"].isNull()) {
+    bool newFlip = doc["flipDisplay"].as<bool>();
+    if (config.flipDisplay != newFlip) {
+      config.flipDisplay = newFlip;
+      rotationChanged = true;
+      DBG_INFO("  Flip display: %s\n", newFlip ? "yes" : "no");
+    }
+  }
+
+  // Parse temperature unit option
+  if (!doc["useFahrenheit"].isNull()) {
+    bool newFahrenheit = doc["useFahrenheit"].as<bool>();
+    if (config.useFahrenheit != newFahrenheit) {
+      config.useFahrenheit = newFahrenheit;
+      DBG_INFO("  Temperature unit: %s\n", newFahrenheit ? "°F" : "°C");
+    }
+  }
+
+  // Parse screen rotation settings
+  if (!doc["enableScreenRotation"].isNull()) {
+    bool newRotation = doc["enableScreenRotation"].as<bool>();
+    if (config.enableScreenRotation != newRotation) {
+      config.enableScreenRotation = newRotation;
+      DBG_INFO("  Screen rotation: %s\n", newRotation ? "enabled" : "disabled");
+      // Reset screen state when toggling
+      showingAlternateScreen = false;
+      lastScreenFlip = millis();
+    }
+  }
+
+  if (!doc["screenFlipInterval"].isNull()) {
+    uint8_t newInterval = doc["screenFlipInterval"].as<uint8_t>();
+    // Validate interval range (3-30 seconds)
+    if (newInterval >= 3 && newInterval <= 30 && config.screenFlipInterval != newInterval) {
+      config.screenFlipInterval = newInterval;
+      DBG_INFO("  Screen flip interval: %u seconds\n", newInterval);
+    }
+  }
+
   saveConfig();
   loadConfig();  // Reload config immediately - no reboot needed
   parseAllTimezones();  // Re-parse TZ strings for manual calculation
@@ -1538,61 +2201,59 @@ void handleScreenshot() {
   takeScreenshot();
 }
 
-// GET /api/snapshot - Stream BMP image of current display
-// Streams directly to client to avoid memory issues
+// GET /api/snapshot - Capture display as BMP image (streamed row-by-row)
+// BMP is simpler and more reliable than JPEG encoding on ESP32
 void handleSnapshot() {
   DBG_INFO("GET /api/snapshot - Capturing display as BMP\n");
 
   // Wait for colons to be visible (even second = colon shown)
-  // Maximum wait of 1.1 seconds to ensure we catch the next even second
   time_t startWait = time(nullptr);
   while ((time(nullptr) % 2) != 0) {
     delay(100);
-    if (time(nullptr) - startWait > 2) break;  // Safety timeout
+    if (time(nullptr) - startWait > 2) break;
   }
-  // Small additional delay to ensure display has updated
-  delay(100);
+
+  // Force display redraw to show colons (match current screen mode)
+  if (!config.landscapeMode && showingAlternateScreen) {
+    drawAlternatePortraitUpdate();  // Capture alternate portrait screen
+  } else {
+    drawTimes();  // Capture standard portrait or landscape
+  }
+  delay(50);
 
   int width = tft.width();
   int height = tft.height();
 
-  // BMP row padding (rows must be multiple of 4 bytes)
+  // BMP rows must be padded to multiple of 4 bytes
   int rowSize = ((width * 3 + 3) / 4) * 4;
   int imageSize = rowSize * height;
-  int fileSize = 54 + imageSize;  // 54-byte header + pixel data
+  int fileSize = 54 + imageSize;
 
-  // BMP Header (14 bytes) + DIB Header (40 bytes) = 54 bytes
+  DBG_INFO("BMP: %dx%d, %d bytes\n", width, height, fileSize);
+
+  // Allocate single row buffer only (~720-960 bytes)
+  uint8_t* rowBuf = (uint8_t*)malloc(rowSize);
+  if (!rowBuf) {
+    DBG_ERROR("Failed to allocate row buffer\n");
+    server.send(500, "text/plain", "Memory allocation failed");
+    return;
+  }
+
+  // Build 54-byte BMP header
   uint8_t header[54] = {0};
-
-  // BMP File Header (14 bytes)
-  header[0] = 'B';
-  header[1] = 'M';
-  header[2] = fileSize & 0xFF;
-  header[3] = (fileSize >> 8) & 0xFF;
-  header[4] = (fileSize >> 16) & 0xFF;
-  header[5] = (fileSize >> 24) & 0xFF;
+  header[0] = 'B'; header[1] = 'M';
+  header[2] = fileSize; header[3] = fileSize >> 8;
+  header[4] = fileSize >> 16; header[5] = fileSize >> 24;
   header[10] = 54;  // Pixel data offset
-
-  // DIB Header (BITMAPINFOHEADER - 40 bytes)
   header[14] = 40;  // DIB header size
-  header[18] = width & 0xFF;
-  header[19] = (width >> 8) & 0xFF;
-  header[22] = height & 0xFF;
-  header[23] = (height >> 8) & 0xFF;
+  header[18] = width; header[19] = width >> 8;
+  header[22] = height; header[23] = height >> 8;
   header[26] = 1;   // Color planes
-  header[28] = 24;  // Bits per pixel (RGB888)
-  header[34] = imageSize & 0xFF;
-  header[35] = (imageSize >> 8) & 0xFF;
-  header[36] = (imageSize >> 16) & 0xFF;
-  header[37] = (imageSize >> 24) & 0xFF;
+  header[28] = 24;  // Bits per pixel
+  header[34] = imageSize; header[35] = imageSize >> 8;
+  header[36] = imageSize >> 16; header[37] = imageSize >> 24;
 
-  // Send HTTP headers
-  server.sendHeader("Content-Type", "image/bmp");
-  server.sendHeader("Content-Disposition", "attachment; filename=\"clock_snapshot.bmp\"");
-  server.sendHeader("Content-Length", String(fileSize));
-  server.sendHeader("Cache-Control", "no-cache");
-
-  // Use chunked transfer
+  // Send HTTP response headers
   WiFiClient client = server.client();
   client.write("HTTP/1.1 200 OK\r\n");
   client.write("Content-Type: image/bmp\r\n");
@@ -1603,40 +2264,26 @@ void handleSnapshot() {
   // Send BMP header
   client.write(header, 54);
 
-  // Allocate row buffer (width * 3 bytes for RGB + padding)
-  uint8_t* rowBuf = (uint8_t*)malloc(rowSize);
-  if (!rowBuf) {
-    DBG_ERROR("Failed to allocate row buffer for snapshot\n");
-    return;
-  }
-
-  // BMP is bottom-up, so read from bottom row to top
+  // Stream pixel data row-by-row (BMP is bottom-up)
   for (int y = height - 1; y >= 0; y--) {
-    int bufIdx = 0;
+    // Read row pixel-by-pixel and convert RGB565 to BGR888
     for (int x = 0; x < width; x++) {
-      uint16_t color565 = tft.readPixel(x, y);
-
-      // Convert RGB565 to BGR888 (BMP uses BGR order)
-      uint8_t r = ((color565 >> 11) & 0x1F) << 3;
-      uint8_t g = ((color565 >> 5) & 0x3F) << 2;
-      uint8_t b = (color565 & 0x1F) << 3;
-
-      rowBuf[bufIdx++] = b;  // Blue
-      rowBuf[bufIdx++] = g;  // Green
-      rowBuf[bufIdx++] = r;  // Red
+      uint16_t c = tft.readPixel(x, y);
+      int i = x * 3;
+      rowBuf[i + 0] = (c & 0x1F) << 3;          // Blue
+      rowBuf[i + 1] = ((c >> 5) & 0x3F) << 2;   // Green
+      rowBuf[i + 2] = ((c >> 11) & 0x1F) << 3;  // Red
     }
-
-    // Pad row to multiple of 4 bytes
-    while (bufIdx < rowSize) {
-      rowBuf[bufIdx++] = 0;
+    // Zero any padding bytes
+    for (int p = width * 3; p < rowSize; p++) {
+      rowBuf[p] = 0;
     }
-
     client.write(rowBuf, rowSize);
-    yield();  // Allow WiFi stack to process
+    yield();
   }
 
   free(rowBuf);
-  DBG_INFO("Snapshot complete: %dx%d, %d bytes\n", width, height, fileSize);
+  DBG_INFO("BMP snapshot complete\n");
 }
 
 // GET /api/mirror - Return current clock state as JSON
@@ -1653,6 +2300,8 @@ void handleMirror() {
 
   // Display mode
   doc["landscapeMode"] = config.landscapeMode;
+  doc["flipDisplay"] = config.flipDisplay;
+  doc["showingAlternateScreen"] = showingAlternateScreen;
 
   // Date from home city (uppercase for display)
   char dateStr[32];
@@ -1687,6 +2336,28 @@ void handleMirror() {
     city["time"] = lastTimes[i + 1];
     city["prevDay"] = lastPrevDay[i + 1];
     city["nextDay"] = lastNextDay[i + 1];
+  }
+
+  // Environmental sensor data (for landscape mode display)
+  doc["sensorAvailable"] = sensorAvailable;
+  if (sensorAvailable) {
+    doc["sensorType"] = sensorType;
+    int displayTemp = config.useFahrenheit ? (int)(temperature * 9.0 / 5.0 + 32) : (int)temperature;
+    const char* tempUnit = config.useFahrenheit ? "F" : "C";
+
+    // Format environmental string to match TFT display
+    char envStr[32] = "";
+#if defined(USE_BME280)
+    // BME280: Temperature + Humidity + Pressure
+    snprintf(envStr, sizeof(envStr), "%d%s %d%% %dhPa", displayTemp, tempUnit, (int)humidity, (int)pressure);
+#elif defined(USE_BMP280)
+    // BMP280: Temperature + Pressure
+    snprintf(envStr, sizeof(envStr), "%d%s  %dhPa", displayTemp, tempUnit, (int)pressure);
+#else
+    // SHT3X or HTU21D: Temperature + Humidity
+    snprintf(envStr, sizeof(envStr), "%d%s  %d%%", displayTemp, tempUnit, (int)humidity);
+#endif
+    doc["envData"] = envStr;
   }
 
   String output;
@@ -2018,7 +2689,8 @@ static const int startupLineHeight = 18;
 
 void initStartupDisplay() {
   tft.init();
-  tft.setRotation(0);  // Portrait for CYD
+  // Note: Rotation is set by applyRotation() before this function is called
+  // Do NOT hardcode rotation here - it will override the config setting
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.setTextFont(2);
@@ -2081,6 +2753,9 @@ void setup() {
   delay(100);  // Allow ADC to stabilize
   DBG_INFO("LDR initialized on pin %d, initial reading: %d\n", LDR_PIN, readLDR());
 
+  // Initialize I2C sensor (BMP280, BME280, SHT3X, or HTU21D)
+  testSensor();
+
   // Initialize touch screen with separate SPI bus (VSPI)
   // Using pin configuration confirmed working from fluid simulation demo
   pinMode(XPT2046_IRQ, INPUT);  // Configure IRQ pin as input
@@ -2088,27 +2763,44 @@ void setup() {
   touchscreen.begin(touchSPI);
   touchscreen.setRotation(0);  // Portrait mode to match display
 
-  initStartupDisplay();
   DBG_INFO("CYD World Clock v%s starting...\n", FIRMWARE_VERSION);
 
-  // Mount filesystem
-  showStartupStep("Init LittleFS...");
+  // Mount filesystem SILENTLY (serial output only, no screen yet)
+  DBG_INFO("Mounting LittleFS...\n");
   smoothFontsReady = LittleFS.begin(false);
   if (smoothFontsReady) {
     DBG_OK("LittleFS mounted");
-    showStartupStep("LittleFS OK", TFT_GREEN);
     logLittleFSContents();
   } else {
     DBG_ERROR("LittleFS mount failed\n");
+  }
+
+  // Load configuration SILENTLY (serial output only, no screen yet)
+  // We need this to know the flip/rotation settings before showing anything
+  DBG_INFO("Loading configuration...\n");
+  loadConfig();
+  parseAllTimezones();  // Parse TZ strings for manual calculation (no setenv leak)
+  DBG_INFO("Config loaded (landscape=%d, flip=%d)\n", config.landscapeMode, config.flipDisplay);
+
+  // Apply display rotation based on config BEFORE showing any messages
+  // This ensures ALL boot messages appear in the correct orientation
+  applyRotation();
+
+  // NOW initialize startup display and show boot messages
+  // All messages will be in correct orientation
+  initStartupDisplay();
+
+  // Show filesystem status
+  showStartupStep("Init LittleFS...");
+  if (smoothFontsReady) {
+    showStartupStep("LittleFS OK", TFT_GREEN);
+  } else {
     showStartupStep("LittleFS FAIL", TFT_RED);
   }
   delay(300);
 
-  // Load configuration
+  // Show config status
   showStartupStep("Loading config...");
-  loadConfig();
-  parseAllTimezones();  // Parse TZ strings for manual calculation (no setenv leak)
-  DBG_OK("Config loaded");
   showStartupStep("Config OK", TFT_GREEN);
   delay(300);
 
@@ -2159,15 +2851,28 @@ void setup() {
   }
   delay(300);
 
-  // Apply display rotation based on config (portrait or landscape)
-  // Do this before splash so splash shows in correct orientation
-  applyRotation();
-
-  // Splash screen (now in correct orientation)
+  // Splash screen (rotation already applied after config load)
   showSplashScreen();
 
   // Draw clock interface
   drawStaticLayout();
+
+  // Reset cached state to force full redraw of times
+  lastDate[0] = '\0';
+  for (int i = 0; i < 6; i++) {
+    lastTimes[i][0] = '\0';
+    lastPrevDay[i] = false;
+    lastNextDay[i] = false;
+    // Use value 2 (invalid for bool comparison) to force first draw
+    // Actually just use true - the empty lastTimes will force timeChanged=true
+    lastColonState[i] = true;
+  }
+  // Reset analog clock state
+  lastSecond = -1;
+  lastMinute = -1;
+  lastHour = -1;
+  // Force time cache refresh
+  lastBatchUpdate = 0;
 
   // Show ready message
   DBG_INFO("==============================================\n");
@@ -2182,6 +2887,10 @@ const unsigned long DISPLAY_UPDATE_INTERVAL = 1000;  // Update display every 1 s
 // Track last debug output time - 5 minutes to reduce overhead
 static unsigned long lastDebugOutput = 0;
 const unsigned long DEBUG_OUTPUT_INTERVAL = 300000;  // Output debug log every 5 minutes
+
+// Track last sensor reading time
+static unsigned long lastSensorRead = 0;
+const unsigned long SENSOR_READ_INTERVAL = 10000;  // Read sensor every 10 seconds
 
 void loop() {
   ArduinoOTA.handle();
@@ -2205,14 +2914,52 @@ void loop() {
   }
   lastDisplayUpdate = now;
 
-  // Update clock display
-  char dateStr[16];
-  formatDate(dateStr, sizeof(dateStr));
-  if (strcmp(dateStr, lastDate) != 0) {
-    drawHeaderDate(dateStr);
-    strlcpy(lastDate, dateStr, sizeof(lastDate));
+  // Handle screen rotation in portrait mode with environmental sensor
+  if (!config.landscapeMode && sensorAvailable && config.enableScreenRotation) {
+    unsigned long flipInterval = config.screenFlipInterval * 1000UL; // Convert to milliseconds
+
+    if (now - lastScreenFlip >= flipInterval) {
+      showingAlternateScreen = !showingAlternateScreen;
+      lastScreenFlip = now;
+
+      DBG_VERBOSE("Flipping to %s screen\n", showingAlternateScreen ? "alternate" : "standard");
+
+      if (showingAlternateScreen) {
+        drawAlternatePortraitStatic();
+        // Force full redraw on next update
+        lastSecond = -1;
+        lastMinute = -1;
+        lastHour = -1;
+      } else {
+        // Clear screen before switching back to standard portrait
+        tft.fillScreen(COLOR_BG);
+        drawStaticLayoutPortrait();
+        // Force full redraw
+        lastDate[0] = '\0';
+        for (int i = 0; i < 6; i++) {
+          lastTimes[i][0] = '\0';
+          lastPrevDay[i] = false;
+          lastNextDay[i] = false;
+          lastColonState[i] = false;
+        }
+      }
+    }
   }
-  drawTimes();
+
+  // Update clock display
+  if (!config.landscapeMode && sensorAvailable && config.enableScreenRotation && showingAlternateScreen) {
+    // Use alternate portrait screen
+    drawAlternatePortraitUpdate();
+  } else {
+    // Use standard portrait or landscape screen
+    char dateStr[16];
+    formatDate(dateStr, sizeof(dateStr));
+    if (strcmp(dateStr, lastDate) != 0) {
+      drawHeaderDate(dateStr);
+      strlcpy(lastDate, dateStr, sizeof(lastDate));
+    }
+    drawTimes();
+  }
 
   // Display current times for all cities - compact format
   // Only output every 5 minutes to reduce overhead
@@ -2243,16 +2990,47 @@ void loop() {
       }
     }
 
-    // Also report heap and LDR status
+    // Also report heap, LDR, and environmental sensor status
     Serial.print(" | Heap: ");
     Serial.print(ESP.getFreeHeap());
     Serial.print(" bytes | LDR: ");
     Serial.print(readLDR());
+    if (sensorAvailable) {
+      int displayTemp = config.useFahrenheit ? (int)(temperature * 9.0 / 5.0 + 32) : (int)temperature;
+      const char* unit = config.useFahrenheit ? "F" : "C";
+      Serial.print(" | ");
+      Serial.print(sensorType);
+      Serial.print(": ");
+      Serial.print(displayTemp);
+      Serial.print("°");
+      Serial.print(unit);
+#if defined(USE_BME280) || defined(USE_SHT3X) || defined(USE_HTU21D)
+      Serial.print(", ");
+      Serial.print((int)humidity);
+      Serial.print("%");
+#endif
+#if defined(USE_BME280) || defined(USE_BMP280)
+      Serial.print(", ");
+      Serial.print((int)pressure);
+      Serial.print(" hPa");
+#endif
+    }
     Serial.println();
 
     // Warn if heap is getting low
     if (ESP.getFreeHeap() < 20000) {
       DBG_WARN("Low heap: %u bytes free\n", ESP.getFreeHeap());
+    }
+  }
+
+  // Read environmental sensor every 10 seconds and update TFT display
+  // Serial output is handled by the 5-minute debug output (same frequency as time print)
+  if (sensorAvailable && (now - lastSensorRead >= SENSOR_UPDATE_INTERVAL)) {
+    lastSensorRead = now;
+
+    if (updateSensorData()) {
+      // Update environmental data display on TFT (landscape mode only)
+      drawEnvironmentalData();
     }
   }
 }

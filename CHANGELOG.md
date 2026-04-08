@@ -5,6 +5,316 @@ All notable changes to the CYD World Clock project will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+---
+
+## [2.9.0] - 2026-04-08
+
+### Changed
+
+- Removed the 10-second environmental sensor serial print in the main loop to reduce repetitive info-level logging.
+- Kept TFT environmental data refresh behavior unchanged during sensor updates.
+
+### Documentation
+
+- Corrected version references across firmware and project documentation for the 2.9.0 release.
+
+---
+
+## [2.8.0] - 2026-02-01
+
+### Changed - Display Performance Optimization
+
+#### Hybrid Font System (MAJOR PERFORMANCE FIX)
+- **Near-instant screen transitions** - eliminated 3-second delay during mode switching
+- **Root cause**: Smooth font rendering from LittleFS is 5-10× slower than bitmap fonts
+- **Solution**: Hybrid approach using fast bitmap fonts for static elements, smooth fonts for dynamic time display
+- **Bitmap fonts now used for**:
+  - Title ("WORLD CLOCK")
+  - City labels (all 6 cities)
+  - "HOME" indicator
+  - Date display
+  - Environmental data labels
+  - Static headers
+- **Smooth fonts still used for**:
+  - Time displays (HH:MM) - keeps the most important element looking crisp
+  - Day indicators (Prev Day / Next Day)
+- **Result**:
+  - Screen redraws 5-10× faster (from ~3 seconds to near-instant)
+  - Time display retains smooth, antialiased appearance where it matters most
+  - Best of both worlds: speed + visual quality
+
+#### Font Loading Optimization (Batching)
+- **Batched drawing by font type** - draw all elements needing same font together, then switch once
+- **Reduced font switches during mode transitions**:
+  - Alternate portrait remote cities: **10 font switches → 2** (80% reduction)
+  - Landscape static layout: **Up to 5 font switches → 1** (80% reduction)
+- **Technical approach**:
+  - Collect what needs drawing in first pass
+  - Execute in font-batched passes:
+    - Pass 1: Draw all city names
+    - Pass 2: Draw all times
+    - Pass 3: Draw all day indicators
+
+#### Font Loading Optimization (Regular Updates)
+- **Optimized normal clock updates** (colon blink, minute changes) - already fast
+- **Eliminated redundant font loading**: Fonts loaded once per update cycle
+- **Reduced LittleFS I/O**: Minimized flash storage reads during display updates
+- **Optimized all display modes**:
+  - Portrait mode: Font loaded before loop, minimal switches for day indicators
+  - Landscape mode: Font loaded once for home/remote times
+  - Alternate portrait mode: Note font pre-loaded for remote cities loop
+
+### Added - Temperature Color Coding and Enhanced Environmental Display
+
+#### Temperature Visualization
+- **Color-coded temperature display** based on user-definable ranges:
+  - **Blue**: Freezing (≤ 0°C)
+  - **Cyan**: Cold (1-15°C)
+  - **Green**: Pleasant (16-25°C)
+  - **Orange**: Hot (26-35°C)
+  - **Red**: Extreme (> 35°C)
+- **Customizable thresholds**: Edit temperature ranges in src/main.cpp
+- **Celsius-based color determination**: Consistent color coding regardless of display unit
+- **Negative temperature support**: Correctly displays sub-zero temperatures with "-" prefix
+
+#### Enhanced Environmental Data Display
+- **Unit symbols added**:
+  - Temperature: "oC" or "oF" (lowercase 'o' as degree symbol)
+  - Pressure: "hPa" suffix
+  - Humidity: Already had "%" symbol
+- **Improved formatting**:
+  - Clear separation of value and unit
+  - Proper handling of negative values
+  - Color-coded temperature in both landscape and alternate portrait modes
+
+#### Alternate Portrait Mode Refinements
+- **Updated day indicators**: Changed from "PREV DAY"/"NEXT DAY" to "Prev Day"/"Next Day" for consistency with standard portrait
+- **Improved positioning**: Day indicators now directly below city name (no indent)
+- **Cleaner layout**: Removed separator lines between remote cities
+- **Better spacing**: Sensor data moved down to avoid overlap with home time
+- **Optimized vertical space**: Remote cities use full available height
+
+---
+
+## [2.7.0] - 2026-01-30
+
+### Added - Portrait Mode Environmental Display with Screen Rotation
+
+#### Alternate Portrait Screen
+- **Dual-screen rotation system** in portrait mode with environmental sensor
+- **Analogue clock display** in portrait mode alternate screen
+  - 55px radius clock face with 12 hour markers
+  - Animated hour, minute, and second hands
+  - Center dot with smooth hand movement
+  - Matches landscape mode analogue clock styling
+- **Home city focus layout**:
+  - Large analogue clock (y=55-165)
+  - Home city name with HOME indicator
+  - Large digital time display
+  - Environmental data (temperature, humidity, pressure)
+- **Compact remote city list**:
+  - 5 cities in 2-line format (17px per city)
+  - City name + time on first line
+  - PREV DAY / NEXT DAY indicator on second line
+  - Efficient use of remaining space (y=235-320)
+
+#### Screen Rotation Control
+- **Configurable auto-flip** between standard and alternate portrait screens
+- **Enable/disable toggle** in WebUI System Status section
+- **Adjustable interval**: 3-30 seconds (default: 8 seconds)
+- **Conditions for activation**:
+  - Portrait mode (not landscape)
+  - Environmental sensor available
+  - Screen rotation enabled
+- **Smooth transitions**: Preserves state between screen flips
+- **Persistent settings**: Stored in NVS across reboots
+
+#### WebUI Integration
+- **New controls** in System Status section:
+  - "Enable Screen Rotation (Portrait+Sensor)" checkbox
+  - "Interval" number input (3-30 second range with validation)
+- **Live mirror support**: Canvas shows both portrait layouts
+  - Standard portrait: 6-city stacked list
+  - Alternate portrait: Analogue clock + compact list
+- **Real-time rendering**: Mirrors current TFT screen state
+- **Automatic layout switching**: Based on `showingAlternateScreen` flag
+
+#### API Enhancements
+- **`/api/state` additions**:
+  - `enableScreenRotation` - boolean flag
+  - `screenFlipInterval` - seconds between flips (3-30)
+  - `showingAlternateScreen` - current screen state
+- **`/api/config` handlers**:
+  - POST `enableScreenRotation` to toggle feature
+  - POST `screenFlipInterval` with range validation
+- **`/api/mirror` additions**:
+  - `showingAlternateScreen` flag for WebUI rendering
+
+### Changed
+- **Config structure**: Added `enableScreenRotation` (bool), `screenFlipInterval` (uint8_t)
+- **NVS keys**: Added `PREF_SCREEN_ROTATION`, `PREF_FLIP_INTERVAL`
+- **Main loop**: Screen flip logic with configurable interval
+- **Drawing functions**: New `drawAlternatePortraitStatic()` and `drawAlternatePortraitUpdate()`
+- **WebUI JavaScript**: New rendering function `renderAlternatePortrait()`
+
+### Technical Details
+- **Memory usage**: ~300 lines added to main.cpp, ~200 lines to WebUI
+- **Screen dimensions**: 240x320 (portrait)
+- **Flip mechanism**: Time-based with `millis()` tracking
+- **State preservation**: All cached state variables maintained across flips
+- **Font consistency**: Uses same smooth fonts as standard portrait mode
+- **Environmental format**: Matches landscape mode display format
+
+### Layout Specifications
+
+**Alternate Portrait Screen (240x320)**:
+- Header: Title + Date (y=0-40)
+- Analogue clock: Center (120, 110), Radius 55px (y=40-170)
+- Home section: Name + HOME + Time + Environmental (y=172-235)
+- Remote cities: 5 × 17px compact rows (y=235-320)
+
+**Compact Remote City Format**:
+- Line 1 (y+2): City name (left, 9px) + Time (right, 14px)
+- Line 2 (y+14): PREV DAY / NEXT DAY indicator (8px, indented)
+
+### User Experience
+- **Non-intrusive**: Standard portrait mode unaffected when rotation disabled
+- **Informative**: Both city times and environmental data visible
+- **Customizable**: User controls enable state and flip speed
+- **Intuitive**: Clear visual distinction between standard and alternate screens
+- **Efficient**: Minimal redraw overhead with state caching
+
+---
+
+## [2.6.1] - 2026-01-30
+
+### Added - Environmental Sensor Support & WebUI Mirror Integration
+
+#### Multi-Sensor Support
+- **I2C sensor support** for environmental monitoring on GPIO 22 (SCL) and GPIO 27 (SDA)
+- **Four sensor types supported**:
+  - **BMP280**: Temperature + Pressure (Bosch)
+  - **BME280**: Temperature + Humidity + Pressure (Bosch)
+  - **SHT3X**: Temperature + Humidity (Sensirion)
+  - **HTU21D**: Temperature + Humidity (TE Connectivity)
+- **Auto-detection**: Sensors are automatically detected at boot via I2C scan
+- **Conditional compilation**: Select sensor type via `#define` in `include/config.h`
+- **Graceful degradation**: Shows "N/A" when no sensor detected
+
+#### Temperature Unit Selection
+- **Celsius/Fahrenheit toggle** in WebUI with real-time conversion
+- **Persistent storage**: Temperature unit preference saved in NVS
+- **API support**: `useFahrenheit` boolean in `/api/state` and `/api/config`
+- **Display formatting**: Shows temperature with appropriate unit symbol (°C or °F)
+
+#### TFT Display Integration (Landscape Mode)
+- **Environmental data display** below digital time in landscape mode left panel
+- **Position**: y=218 (below digital time at y=181)
+- **Adaptive format**:
+  - BME280: `25° 65% 1013hPa` (temp, humidity, pressure)
+  - BMP280: `25°  1013hPa` (temp, pressure)
+  - SHT3X/HTU21D: `25°  65%` (temp, humidity)
+- **Smooth font**: Uses `kFontNote` for consistent styling
+- **Auto-hiding**: Only shows when in landscape mode and sensor available
+
+#### WebUI Display Mirror Integration (New in 2.6.1)
+- **Environmental data in mirror**: Canvas display now shows sensor readings matching TFT
+- **Live updates**: Environmental data updates every 2 seconds with mirror refresh
+- **Landscape mode only**: Displays at y=218 below digital time, just like TFT
+- **Matching format**: Exact same format as TFT display (temp, humidity, pressure based on sensor)
+- **API enhancement**: `/api/mirror` endpoint now includes:
+  - `sensorAvailable` - boolean indicating sensor presence
+  - `sensorType` - sensor model name
+  - `envData` - pre-formatted environmental string
+- **Color consistency**: Light grey (#C0C0C0) matching TFT_LIGHTGREY
+
+#### WebUI Status Display
+- **Sensor Type**: Shows detected sensor model (BMP280, BME280, SHT3X, HTU21D, or N/A)
+- **Temperature**: Real-time temperature with unit toggle
+- **Humidity**: Displays relative humidity percentage (when available)
+- **Pressure**: Shows barometric pressure in hPa (when available)
+- **Status updates**: Refreshes every 5 seconds
+
+#### Serial Output
+- **Periodic logging**: Sensor readings output to serial every 10 seconds
+- **Debug formatting**: Shows sensor type and available measurements
+- **Example**: `Sensor: BMP280 - 24.5°C, 1013.2 hPa`
+
+### Changed
+- **Config structure**: Added `bool useFahrenheit` field
+- **NVS keys**: Added `PREF_FAHRENHEIT` for temperature unit storage
+- **Library dependencies**: Added Adafruit sensor libraries (BMP280, BME280, SHT31, HTU21DF, Unified Sensor)
+- **API endpoints**:
+  - Updated `/api/state` to include sensor data and temperature unit
+  - Updated `/api/mirror` to include environmental data
+- **Project structure**: Added `include/config.h` for hardware configuration
+- **WebUI JavaScript**: Updated `app.js` with environmental data rendering in landscape mirror
+
+### Technical Details
+- **I2C pins**: SDA=GPIO27, SCL=GPIO22 (CYD Temp/Humidity Interface)
+- **Sensor polling**: 10-second update interval
+- **Memory impact**: Minimal - sensor objects conditionally compiled
+- **Initialization**: `testSensor()` auto-detects and initializes appropriate driver
+- **Data reading**: `updateSensorData()` supports all sensor types with conditional compilation
+- **Mirror format**: Pre-formatted string sent via API reduces WebUI complexity
+
+---
+
+## [2.6.0] - 2026-01-28
+
+### Added - Flip Display & Screenshot Improvements
+
+#### Flip Display Feature
+- **180° rotation option** allows mounting CYD with USB connector on either side
+- **Portrait mode**: USB bottom (normal) or top (flipped)
+- **Landscape mode**: USB right (normal) or left (flipped)
+- **Persistent storage**: Flip setting saved in NVS, survives reboots
+- **WebUI control**: Checkbox next to Display Mode dropdown
+- **API support**: `flipDisplay` boolean in `/api/state` and `/api/config` endpoints
+- **Rotation values**: 0=portrait, 1=landscape, 2=portrait-flipped, 3=landscape-flipped
+
+#### Screenshot Capture Improvements
+- **Changed to BMP format** from JPEG for better reliability
+- **Removed JPEGENC library dependency** - simpler codebase
+- **Row-by-row streaming** minimizes memory usage (~1KB buffer vs 150KB+)
+- **File format**: 24-bit BMP with proper padding and bottom-up row order
+- **File size**: ~230KB uncompressed (trade-off for reliability)
+- **Downloads as**: `clock_snapshot.bmp`
+
+### Fixed
+
+#### Colon Blinking on Startup
+- **Problem**: After firmware upload, colons didn't blink until config change or mode switch
+- **Root cause**: `lastColonState` initialization timing issue with first draw
+- **Solution**:
+  - Simplified `lastColonState` initialization to `true`
+  - First draw triggers via `timeChanged=true` (empty string comparison)
+  - Subsequent draws handle colon blink correctly
+- **Result**: Colons blink immediately on boot
+
+#### Text Padding in Landscape Mode
+- **Problem**: Home city time (left panel) showed ghosting/artifacts when colons blinked
+- **Root cause**: Missing `setTextPadding()` call for home city and remote city times
+- **Solution**: Added `tft.setTextPadding(timePadWidth)` to both:
+  - Home city digital time (below analog clock)
+  - Remote cities time display (right panel)
+- **Result**: Clean text updates with no artifacts
+
+### Changed
+- **Config structure**: Added `bool flipDisplay` field
+- **NVS keys**: Added `PREF_FLIP` for persistent flip storage
+- **Rotation logic**: `applyRotation()` now calculates rotation 0-3 based on landscape+flip
+- **Library dependencies**: Removed `bitbank2/JPEGENC @ ^1.0.1`
+- **WebUI**: Added flip display checkbox in System Status section
+
+### Documentation
+- **CLAUDE.md**: Updated with flip display feature and BMP screenshot details
+- **platformio.ini**: Removed JPEGENC library dependency
+
+---
+
 ## [2.5.0] - 2026-01-28
 
 ### Added - NEXT DAY Indicator & Screenshot Capture

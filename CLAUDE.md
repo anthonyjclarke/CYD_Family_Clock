@@ -2,7 +2,7 @@
 
 ## Overview
 
-World clock displaying current time across 6 configurable timezones (1 home + 5 remote cities) on a 2.8" ILI9341 TFT display. Features dual display modes (portrait digital / landscape with analogue clock), web-based configuration with live clock mirror, NVS persistent storage, OTA updates, custom timezone entry, 5-level debug system, and anti-flicker selective redraws with smooth fonts from LittleFS.
+World clock displaying current time across 6 configurable timezones (1 home + 5 remote cities) on a 2.8" ILI9341 TFT display. Features dual display modes (portrait digital / landscape with analogue clock), environmental sensor support (BMP280/BME280/SHT3X/HTU21D), web-based configuration with live clock mirror, NVS persistent storage, OTA updates, custom timezone entry, 5-level debug system, and anti-flicker selective redraws with smooth fonts from LittleFS.
 
 ## Hardware
 
@@ -10,6 +10,7 @@ World clock displaying current time across 6 configurable timezones (1 home + 5 
 - Display: ILI9341 2.8" TFT (240x320 portrait / 320x240 landscape)
 - Touch: XPT2046 resistive touch screen
 - LDR: Light Dependent Resistor for ambient light sensing
+- I2C Sensors (optional): BMP280, BME280, SHT3X, or HTU21D on GPIO 22/27
 - Power: USB 5V via CYD board
 
 ## Build Environment
@@ -21,15 +22,21 @@ World clock displaying current time across 6 configurable timezones (1 home + 5 
   - WiFiManager @ ^2.0.16-rc.2 (credential portal)
   - ArduinoJson @ ^7.0.4 (web API JSON handling)
   - XPT2046_Touchscreen (touch screen driver)
+  - Adafruit BMP280 Library @ ^2.6.8 (temperature + pressure sensor)
+  - Adafruit BME280 Library @ ^2.2.4 (temperature + humidity + pressure sensor)
+  - Adafruit SHT31 Library @ ^2.2.2 (temperature + humidity sensor)
+  - Adafruit HTU21DF Library @ ^1.1.0 (temperature + humidity sensor)
+  - Adafruit Unified Sensor @ ^1.1.14 (sensor abstraction layer)
   - Built-in: WiFi, ArduinoOTA, WebServer, Preferences (NVS), LittleFS, time.h (NTP)
 
 ## Project Structure
 
 ```txt
 ├── src/
-│   └── main.cpp              # Main implementation (~2100 lines)
+│   └── main.cpp              # Main implementation (~2600 lines)
 ├── include/
 │   ├── User_Setup.h          # TFT_eSPI hardware config
+│   ├── config.h              # Hardware configuration (sensor selection, I2C pins)
 │   └── timezones.h           # 102 predefined timezones across 13 regions
 ├── data/                     # LittleFS files (upload with uploadfs)
 │   ├── index.html            # Web configuration UI
@@ -74,6 +81,8 @@ World clock displaying current time across 6 configurable timezones (1 home + 5 
 | Function | GPIO | Notes                    |
 |----------|------|--------------------------|
 | LDR      | 34   | Analog input (0-4095)    |
+| I2C SDA  | 27   | I2C data (sensors)       |
+| I2C SCL  | 22   | I2C clock (sensors)      |
 
 ## Configuration System
 
@@ -82,8 +91,8 @@ World clock displaying current time across 6 configurable timezones (1 home + 5 
 Config stored in ESP32 NVS (Non-Volatile Storage) via Preferences API:
 
 - **Namespace**: `"worldclock"`
-- **Keys**: `homeLabel`, `homeTz`, `remote0Label`, `remote0Tz`, ..., `remote4Label`, `remote4Tz`, `landscape`
-- **Load/Save**: `loadConfig()` / `saveConfig()` functions (lines 446-496)
+- **Keys**: `homeLabel`, `homeTz`, `remote0Label`, `remote0Tz`, ..., `remote4Label`, `remote4Tz`, `landscape`, `flip`, `fahrenheit`, `screenRot`, `flipInt`
+- **Load/Save**: `loadConfig()` / `saveConfig()` functions
 
 ### Default Configuration
 
@@ -116,7 +125,7 @@ Remote Cities:
 ### Network Settings (line 160)
 
 ```cpp
-FIRMWARE_VERSION = "2.5.0"
+FIRMWARE_VERSION = "2.9.0"
 OTA_HOSTNAME = "WorldClock"
 OTA_PASSWORD = "change-me"  // ⚠️ CHANGE IN PRODUCTION
 NTP_SERVER1 = "pool.ntp.org"
@@ -156,17 +165,21 @@ kFontTime = "NotoSans-Bold16" (fallback: 6)
 kFontNote = "NotoSans-Bold7" (fallback: 2)
 ```
 
-## Current State (v2.5.0)
+## Current State (v2.9.0)
 
 ### Features
 
 - **6 Cities**: 1 home (reference timezone) + 5 remote cities
 - **Dual Display Modes**: Portrait (240x320) or Landscape (320x240) with analogue clock
-- **Analogue Clock**: Real-time clock face with hour, minute, and second hands
+- **Portrait Screen Rotation**: Auto-flip between standard and alternate portrait screens (with sensor)
+- **Alternate Portrait Layout**: Analogue clock + environmental data + compact city list
+- **Flip Display**: 180° rotation for mounting with USB on either side
+- **Analogue Clock**: Real-time clock face with hour, minute, and second hands (landscape + alternate portrait)
 - **Web Configuration**: Full WebUI at `http://<device-ip>` with live clock mirror
 - **Screenshot Capture**: Download true TFT pixels as BMP via WebUI button
 - **Display Mode Toggle**: Switch between portrait/landscape via WebUI
-- **Persistent Config**: NVS storage, survives reboots (including display mode)
+- **Screen Rotation Control**: Enable/disable and adjust flip interval (3-30 seconds)
+- **Persistent Config**: NVS storage, survives reboots (including display mode, flip, and rotation settings)
 - **Custom Timezones**: Manual POSIX string entry for unlisted cities
 - **OTA Updates**: Wireless firmware updates with progress bar
 - **Debug System**: 5-level runtime-adjustable logging
@@ -179,6 +192,11 @@ kFontNote = "NotoSans-Bold7" (fallback: 2)
 - **Prev Day Indicator**: Yellow "PREV DAY" for cities in previous day
 - **Next Day Indicator**: Cyan "NEXT DAY" for cities ahead of home city
 - **LDR Support**: Ambient light sensing (for future brightness control)
+- **Environmental Sensors**: Optional I2C sensor support (BMP280, BME280, SHT3X, HTU21D)
+- **Temperature Display**: Real-time temperature with Celsius/Fahrenheit toggle
+- **Humidity Display**: Relative humidity percentage (when sensor supports it)
+- **Pressure Display**: Barometric pressure in hPa (when sensor supports it)
+- **Sensor Auto-Detection**: Automatic I2C sensor detection at boot
 
 ### Display Layout - Portrait Mode (240x320)
 
@@ -204,6 +222,58 @@ kFontNote = "NotoSans-Bold7" (fallback: 2)
 └─────────────────────────┘
 ```
 
+### Display Layout - Alternate Portrait Mode (240x320)
+
+**Note**: Alternates with standard portrait when environmental sensor available and screen rotation enabled.
+
+```txt
+┌─────────────────────────┐
+│   Home: SYDNEY          │ ← Home city label (cyan, centered, y=4)
+│                         │
+│               06:27     │ ← Home time (centered, y=30)
+│                         │
+│                         │
+│  ╭─────╮   Temp: 25C    │ ← Analogue clock (left)
+│ /12  •  \  Hum: 65%     │   Center: (60, 80)
+││9  •───3│  Press: 1013  │   + Sensor data (right, y=70)
+│ \ 6    /                │   Clock radius: 55px
+│  ╰─────╯                │
+│                         │
+│                         │
+├─────────────────────────┤ ← Separator (y=137)
+│ VANCOUVER      11:27    │ ← Remote cities
+│ Prev Day                │   (no separator lines)
+│                         │   Day indicator directly
+│ LONDON         19:27    │   below city name
+│ Prev Day                │
+│                         │
+│ NAIROBI        22:27    │
+│ Prev Day                │
+│                         │
+│ DENVER         12:27    │
+│ Prev Day                │
+│                         │
+│ WELLINGTON     08:27    │
+│                         │
+└─────────────────────────┘
+```
+
+**Key Features**:
+- Home time prominently displayed at top, centered (y=30)
+- Analogue clock positioned to avoid cropping (bottom edge at y=135)
+- Sensor data positioned below home time (y=70) to avoid overlap
+- Remote cities at y=137 with no separator lines between them
+- Day indicators ("Prev Day"/"Next Day") directly below city name, matching standard portrait
+- Sensor data always displayed (shows "n/a" when sensor unavailable or metric not supported)
+- Humidity shown for all cases (even BMP280 which doesn't have humidity sensor)
+- Pressure value shown without "hPa" suffix to prevent wrapping
+
+**Screen Rotation Behavior**:
+- Alternates between standard and alternate layouts every N seconds (default: 8)
+- Only active when: Portrait mode + Sensor available + Rotation enabled
+- Configurable interval: 3-30 seconds via WebUI
+- Smooth transitions with state preservation
+
 ### Display Layout - Landscape Mode (320x240)
 
 ```txt
@@ -217,9 +287,10 @@ kFontNote = "NotoSans-Bold7" (fallback: 2)
 │   \     /  │                            │
 │    ╰───╯   │ DENVER           21:23     │
 │            │   PREV DAY                 │
-│  SYDNEY    │                            │ 
+│  SYDNEY    │                            │
 │   HOME     │ TOKYO            13:23     │
 │   14:23    │                            │
+│ 25° 1013hPa│                            │ ← Environmental data (if sensor present)
 └────────────┴────────────────────────────┘
  Left Panel     Right Panel (5 remote cities)
   (120px)              (200px)
@@ -237,12 +308,18 @@ kFontNote = "NotoSans-Bold7" (fallback: 2)
 ### WebUI Features
 
 - **Live Clock Display**: Real-time mirror of all city times (updates every 2 seconds)
+- **Environmental Data in Mirror**: Shows sensor readings in landscape and alternate portrait mirrors
+- **Alternate Portrait Mirror**: Renders analogue clock layout when active on device
 - **Screenshot Capture**: "Capture Screenshot" button downloads true TFT pixels as BMP
 - **Display Mode Toggle**: Switch between portrait and landscape modes
+- **Flip Display**: Checkbox to flip display 180° (USB on opposite side)
+- **Screen Rotation Control**: Enable/disable portrait screen rotation with configurable interval (3-30 sec)
 - **Timezone Dropdowns**: 102 predefined cities grouped by region
 - **Custom Entry**: Manual POSIX timezone string input
 - **Live Preview**: Shows timezone string for selected city
-- **System Status**: Firmware, hostname, WiFi, IP, uptime, free heap, LDR value
+- **System Status**: Firmware, hostname, WiFi, IP, uptime, free heap, LDR value, sensor data
+- **Environmental Data**: Displays sensor type, temperature (°C/°F), humidity, pressure
+- **Temperature Unit Toggle**: Checkbox to switch between Celsius and Fahrenheit
 - **Debug Level Control**: Adjust logging verbosity via dropdown
 - **System Actions**: Reboot device, reset WiFi credentials
 - **Auto-refresh**: Status updates every 5 seconds
@@ -250,11 +327,11 @@ kFontNote = "NotoSans-Bold7" (fallback: 2)
 ### REST API Endpoints
 
 ```txt
-GET  /api/state       - System status + current config (JSON)
+GET  /api/state       - System status + current config (JSON, includes flipDisplay)
 GET  /api/mirror      - Current clock display data for all cities (JSON)
 GET  /api/snapshot    - Download TFT display as BMP image (waits for colons visible)
 GET  /api/timezones   - List of 102 predefined timezones (JSON)
-POST /api/config      - Update timezone configuration and display mode
+POST /api/config      - Update timezone configuration, display mode, and flip setting
 POST /api/debug-level - Change debug level at runtime
 POST /api/reboot      - Reboot device
 POST /api/reset-wifi  - Clear WiFi credentials and reboot to AP mode
@@ -274,6 +351,8 @@ struct Config {
   char remoteCities[5][32];    // 5 remote city names
   char remoteTzStrings[5][64]; // 5 remote POSIX timezones
   bool landscapeMode;          // Display orientation: true = landscape
+  bool flipDisplay;            // Flip display 180°: allows USB on opposite side
+  bool useFahrenheit;          // Temperature unit: false = Celsius, true = Fahrenheit
 };
 ```
 
@@ -321,10 +400,26 @@ void getLocalTimeNoSetenv(time_t utc, const ParsedTimezone* tz, struct tm* out) 
 
 ### Font Management
 
+- **Hybrid font system (v2.7.0+)**: Bitmap fonts for static elements, smooth fonts for dynamic time
+  - **Bitmap fonts** (5-10× faster rendering):
+    - Title, city labels, HOME indicator, date
+    - Environmental data labels
+    - Static headers
+    - Uses `tft.setTextFont(2)` or `tft.setTextFont(4)` directly
+  - **Smooth fonts** (antialiased, slower but better looking):
+    - Time displays (HH:MM) - most important visual element
+    - Day indicators (Prev Day / Next Day)
+    - Uses `setFont(smoothName, fallbackSize)` helper
+  - **Result**: Near-instant screen redraws (was ~3 seconds) while keeping time display crisp
 - Loads smooth fonts from LittleFS on-demand
 - Unloads previous font when switching
 - Falls back to bitmap fonts if .vlw files missing
 - Helper: `setFont(smoothName, fallbackSize)`
+- **Font batching optimization**:
+  - Batched drawing by font type (10 switches → 2 switches)
+  - Alternate portrait: Collect city data first, then draw in 3 font-batched passes
+  - Landscape static: Draw cities in 2 passes by name length instead of switching per city
+  - Regular updates: Fonts loaded once per update cycle
 
 ### Previous Day Logic
 
@@ -677,6 +772,210 @@ int readLDR() {
 - Value displayed in WebUI System Status
 - Future: automatic brightness control
 
+## Environmental Sensor Support
+
+### Supported Sensors
+
+Four I2C sensor types are supported via conditional compilation in [include/config.h](include/config.h):
+
+| Sensor | Manufacturer | Measurements | I2C Address |
+|--------|-------------|--------------|-------------|
+| BMP280 | Bosch | Temperature + Pressure | 0x76 or 0x77 |
+| BME280 | Bosch | Temperature + Humidity + Pressure | 0x76 or 0x77 |
+| SHT3X | Sensirion | Temperature + Humidity | 0x44 or 0x45 |
+| HTU21D | TE Connectivity | Temperature + Humidity | 0x40 |
+
+### Hardware Configuration
+
+#### I2C Pins (CYD Temp/Humidity Interface)
+- **SDA**: GPIO 27
+- **SCL**: GPIO 22
+- **Update Interval**: 10 seconds (configurable in config.h)
+
+#### Sensor Selection
+
+Edit [include/config.h](include/config.h) and uncomment ONE sensor type:
+
+```cpp
+#define USE_BMP280   // Bosch BMP280 - Temperature + Pressure
+// #define USE_BME280   // Bosch BME280 - Temperature + Humidity + Pressure
+// #define USE_SHT3X    // Sensirion SHT3X - Temperature + Humidity
+// #define USE_HTU21D   // TE HTU21D - Temperature + Humidity
+
+#define SENSOR_SDA_PIN  27
+#define SENSOR_SCL_PIN  22
+#define SENSOR_UPDATE_INTERVAL 10000  // 10 seconds
+```
+
+### Auto-Detection
+
+Sensors are automatically detected at boot via I2C scan:
+
+```cpp
+bool testSensor() {
+  Wire.begin(SENSOR_SDA_PIN, SENSOR_SCL_PIN);
+
+  #ifdef USE_BMP280
+    if (bmp280.begin(0x76)) {
+      sensorType = "BMP280";
+      sensorAvailable = true;
+      return true;
+    }
+  #endif
+  // ... similar for other sensor types
+
+  return false;
+}
+```
+
+### Data Reading
+
+`updateSensorData()` function reads sensor data with conditional compilation:
+
+```cpp
+bool updateSensorData() {
+  if (!sensorAvailable) return false;
+
+  #ifdef USE_BMP280
+    temperature = bmp280.readTemperature();
+    pressure = bmp280.readPressure() / 100.0;  // Convert Pa to hPa
+  #elif defined(USE_BME280)
+    temperature = bme280.readTemperature();
+    humidity = bme280.readHumidity();
+    pressure = bme280.readPressure() / 100.0;
+  // ... etc
+  #endif
+
+  return true;
+}
+```
+
+### TFT Display
+
+Environmental data appears in multiple display modes:
+
+**Landscape Mode** (left panel, y=218):
+- **BME280**: `25°C 65% 1013hPa` (temp, humidity, pressure)
+- **BMP280**: `25°C  1013hPa` (temp, pressure)
+- **SHT3X/HTU21D**: `25°C  65%` (temp, humidity)
+
+**Alternate Portrait Mode** (right side, y=70-98):
+```
+Temp: 25°C
+Hum: 65%
+Press: 1013hPa
+```
+
+**Styling:**
+- Font: `kFontNote` (NotoSans-Bold7)
+- Temperature: Color-coded based on value (see Temperature Color Coding)
+- Humidity/Pressure: Light grey (TFT_LIGHTGREY)
+- Units: °C/°F for temperature, % for humidity, hPa for pressure
+- Negative temperatures: Displayed with "-" prefix (e.g., "-5°C")
+- Visibility: Landscape mode (when sensor available), Alternate portrait (always, shows "n/a" when unavailable)
+
+### WebUI Display
+
+System Status section shows:
+- **Sensor Type**: BMP280, BME280, SHT3X, HTU21D, or N/A
+- **Temperature**: Real-time with unit (°C or °F)
+- **Humidity**: Percentage (when available)
+- **Pressure**: hPa (when available)
+- **Temperature Toggle**: Checkbox to switch °C ↔ °F
+
+### Temperature Unit Conversion
+
+Celsius ↔ Fahrenheit conversion:
+
+```cpp
+// Display temperature
+int displayTemp = config.useFahrenheit
+  ? (int)(temperature * 9.0 / 5.0 + 32)  // Convert to Fahrenheit
+  : (int)temperature;                      // Keep as Celsius
+
+// API response (server-side conversion)
+if (config.useFahrenheit) {
+  tempValue = (int)(temperature * 9.0 / 5.0 + 32);
+  unit = "°F";
+} else {
+  tempValue = (int)temperature;
+  unit = "°C";
+}
+```
+
+Unit preference stored in NVS (`PREF_FAHRENHEIT` key).
+
+### Temperature Color Coding
+
+Temperature values are color-coded based on user-definable ranges for visual feedback:
+
+**Default Temperature Ranges (in Celsius):**
+- **Freezing** (≤ 0°C): Blue (`TFT_BLUE`) - Below or at freezing point
+- **Cold** (1-15°C): Cyan (`TFT_CYAN`) - Cold but above freezing
+- **Pleasant** (16-25°C): Green (`TFT_GREEN`) - Comfortable temperature
+- **Hot** (26-35°C): Orange (`TFT_ORANGE`) - Hot weather
+- **Extreme** (> 35°C): Red (`TFT_RED`) - Extreme heat
+
+**Customization:**
+
+Edit temperature thresholds in [src/main.cpp](src/main.cpp:577-597):
+
+```cpp
+// Temperature color coding - User Definable Ranges (in Celsius)
+#define TEMP_FREEZING_MAX 0      // <= 0°C: Freezing (Blue)
+#define TEMP_COLD_MAX 15         // 1-15°C: Cold (Cyan)
+#define TEMP_PLEASANT_MAX 25     // 16-25°C: Pleasant (Green)
+#define TEMP_HOT_MAX 35          // 26-35°C: Hot (Orange)
+                                 // > 35°C: Extreme (Red)
+
+// Temperature display colors
+#define COLOR_TEMP_FREEZING TFT_BLUE
+#define COLOR_TEMP_COLD     TFT_CYAN
+#define COLOR_TEMP_PLEASANT TFT_GREEN
+#define COLOR_TEMP_HOT      TFT_ORANGE
+#define COLOR_TEMP_EXTREME  TFT_RED
+```
+
+**Features:**
+- Color determination always uses Celsius for consistency
+- Works with both Celsius and Fahrenheit display modes
+- Handles negative temperatures correctly (shows "-" prefix)
+- Temperature displayed with degree symbol (°C or °F)
+- Pressure displayed with "hPa" unit
+
+### Serial Output
+
+Sensor readings logged every 10 seconds:
+
+```
+[INFO] Sensor: BMP280 - 24.5°C, 1013.2 hPa
+[INFO] Sensor: BME280 - 23.8°C, 62.3%, 1011.5 hPa
+```
+
+### API Integration
+
+`/api/state` endpoint includes sensor data:
+
+```json
+{
+  "sensorAvailable": true,
+  "sensorType": "BMP280",
+  "temperature": 24,
+  "humidity": null,
+  "pressure": 1013,
+  "useFahrenheit": false
+}
+```
+
+`/api/config` accepts temperature unit updates:
+
+```json
+POST /api/config
+{
+  "useFahrenheit": true
+}
+```
+
 ## Future Enhancements
 
 - [ ] WiFi reconnect logic in main loop
@@ -687,8 +986,9 @@ int readLDR() {
 - [x] ~~API endpoint for debug level adjustment~~ - **COMPLETED v2.0.0**
 - [x] ~~Display mirror of TFT to WebUI~~ - **COMPLETED v2.4.0**
 - [x] ~~Multiple display modes~~ - **COMPLETED v2.4.0** (portrait/landscape)
+- [x] ~~Temperature/humidity display~~ - **COMPLETED v2.6.1** (I2C sensor support)
+- [x] ~~Environmental data display in portrait mode~~ - **COMPLETED v2.7.0** (alternate screen with rotation)
 - [ ] Weather API integration per city
-- [ ] Temperature/humidity display
 - [ ] User-configurable color schemes
 - [ ] MQTT support for home automation
 
@@ -696,12 +996,25 @@ int readLDR() {
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed version history.
 
-**Current Version**: 2.5.0 (2026-01-28)
+**Current Version**: 2.9.0 (2026-04-08)
 
-- **NEXT DAY indicator** (cyan) for cities ahead of home city
-- **Screenshot capture** via WebUI - downloads true TFT pixels as BMP
-- **Colon alignment fix** - full time string redraw prevents misalignment
-- **Immediate PREV/NEXT DAY updates** after config changes
+- **Reduced sensor log noise** - removed the 10-second environmental sensor serial print while preserving TFT updates
+
+- **Hybrid font system** - 5-10× faster screen redraws (bitmap for static, smooth for time)
+- **Font batching optimization** - 80% reduction in font switches during mode transitions
+- **Temperature color coding** - User-definable ranges (freezing/cold/pleasant/hot/extreme)
+- **Enhanced environmental display** - Unit symbols added (°C/°F, hPa, %) with negative temperature support
+- **Improved alternate portrait** - Refined layout with better positioning and spacing
+- Portrait screen rotation - Auto-flip between standard and alternate portrait screens
+- Alternate portrait layout - Analogue clock + environmental data + compact city list
+- Screen rotation control - Enable/disable toggle with configurable interval (3-30 seconds)
+- WebUI mirror support - Renders both standard and alternate portrait layouts
+- Environmental sensor support - BMP280, BME280, SHT3X, HTU21D sensors
+- WebUI mirror integration - Environmental data shown in landscape and alternate portrait
+- Temperature unit toggle - Celsius/Fahrenheit switching in WebUI
+- Flip display - 180° rotation for mounting with USB on either side
+- BMP screenshot format - replaced JPEG for better reliability, ~230KB files
+- NEXT DAY indicator (cyan) for cities ahead of home city
 - Landscape mode with analogue clock display
 - Live clock mirror in WebUI (2-second refresh)
 - Eliminated memory leak (v2.3.0) - heap stable indefinitely
