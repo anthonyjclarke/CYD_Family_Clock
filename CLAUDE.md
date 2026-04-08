@@ -125,7 +125,7 @@ Remote Cities:
 ### Network Settings (line 160)
 
 ```cpp
-FIRMWARE_VERSION = "2.5.0"
+FIRMWARE_VERSION = "2.9.0"
 OTA_HOSTNAME = "WorldClock"
 OTA_PASSWORD = "change-me"  // ⚠️ CHANGE IN PRODUCTION
 NTP_SERVER1 = "pool.ntp.org"
@@ -165,7 +165,7 @@ kFontTime = "NotoSans-Bold16" (fallback: 6)
 kFontNote = "NotoSans-Bold7" (fallback: 2)
 ```
 
-## Current State (v2.7.0)
+## Current State (v2.9.0)
 
 ### Features
 
@@ -996,7 +996,9 @@ POST /api/config
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed version history.
 
-**Current Version**: 2.8.0 (2026-02-01)
+**Current Version**: 2.9.0 (2026-04-08)
+
+- **Reduced sensor log noise** - removed the 10-second environmental sensor serial print while preserving TFT updates
 
 - **Hybrid font system** - 5-10× faster screen redraws (bitmap for static, smooth for time)
 - **Font batching optimization** - 80% reduction in font switches during mode transitions

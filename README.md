@@ -1,4 +1,4 @@
-![Version](https://img.shields.io/badge/version-2.8.0-blue)
+![Version](https://img.shields.io/badge/version-2.9.0-blue)
 ![Platform](https://img.shields.io/badge/platform-ESP32-green)
 ![Framework](https://img.shields.io/badge/framework-Arduino-orange)
 

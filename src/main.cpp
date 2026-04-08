@@ -201,7 +201,7 @@ const unsigned long DIAGNOSTICS_TIMEOUT = 15000; // 15 seconds
 bool showingAlternateScreen = false;   // Current screen: false=standard, true=alternate
 unsigned long lastScreenFlip = 0;       // Last time screens were flipped
 
-#define FIRMWARE_VERSION "2.8.0"
+#define FIRMWARE_VERSION "2.9.0"
 #define OTA_HOSTNAME "WorldClock"
 #define OTA_PASSWORD "change-me"  // TODO: Change this!
 
@@ -3023,30 +3023,14 @@ void loop() {
     }
   }
 
-  // Read environmental sensor every 10 seconds and output to serial
+  // Read environmental sensor every 10 seconds and update TFT display
+  // Serial output is handled by the 5-minute debug output (same frequency as time print)
   if (sensorAvailable && (now - lastSensorRead >= SENSOR_UPDATE_INTERVAL)) {
     lastSensorRead = now;
 
     if (updateSensorData()) {
       // Update environmental data display on TFT (landscape mode only)
       drawEnvironmentalData();
-
-      if (debugLevel >= DBG_LEVEL_INFO) {
-        int displayTemp = config.useFahrenheit ? (int)(temperature * 9.0 / 5.0 + 32) : (int)temperature;
-        const char* unit = config.useFahrenheit ? "F" : "C";
-
-        // Build sensor info based on what's available
-#if defined(USE_BME280)
-        Serial.printf("[INFO] %s: %d°%s, %.0f%%, %.0f hPa\n",
-                      sensorType, displayTemp, unit, humidity, pressure);
-#elif defined(USE_BMP280)
-        Serial.printf("[INFO] %s: %d°%s, %.0f hPa\n",
-                      sensorType, displayTemp, unit, pressure);
-#else  // SHT3X or HTU21D
-        Serial.printf("[INFO] %s: %d°%s, %.0f%%\n",
-                      sensorType, displayTemp, unit, humidity);
-#endif
-      }
     }
   }
 }

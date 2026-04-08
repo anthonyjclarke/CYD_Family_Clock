@@ -7,12 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Planned for v2.9.0
+---
 
-- [ ] WiFi reconnect logic in main loop
-- [ ] Automatic NTP resync every 24 hours
-- [ ] Automatic brightness control using LDR
-- [ ] Touch-based city selection/editing
+## [2.9.0] - 2026-04-08
+
+### Changed
+
+- Removed the 10-second environmental sensor serial print in the main loop to reduce repetitive info-level logging.
+- Kept TFT environmental data refresh behavior unchanged during sensor updates.
+
+### Documentation
+
+- Corrected version references across firmware and project documentation for the 2.9.0 release.
 
 ---
 
