@@ -1,0 +1,16 @@
+# CYD_Family_Clock - 4MB flash, standard dual-OTA layout (frozen once released).
+#
+# Two 1.792MB app slots (OTA A/B) plus a 384KB data partition. The `spiffs`
+# subtype name is correct even though the partition is mounted as LittleFS.
+#
+# Settings live in NVS (same offset as default.csv, so they survive the switch).
+# LittleFS holds only the VLW fonts from data/, shipped as the installer's FS
+# part. Never store settings or caches there: an installer Update rewrites it.
+#
+# Name,     Type, SubType,  Offset,   Size,    Flags
+nvs,        data, nvs,      0x9000,   0x5000,
+otadata,    data, ota,      0xe000,   0x2000,
+app0,       app,  ota_0,    0x10000,  0x1C0000,
+app1,       app,  ota_1,    0x1D0000, 0x1C0000,
+spiffs,     data, spiffs,   0x390000, 0x60000,
+coredump,   data, coredump, 0x3F0000, 0x10000,
