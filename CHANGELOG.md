@@ -12,12 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tools/merge_bin.py` post-build script (from cyd-web-installer): writes `flash_parts.json` and `firmware-merged.bin` per build. Installer label and hint on the `cyd_esp32_2432s028` env.
 - Improv-Serial, always on (vendored `lib/ImprovWiFi` with the parser fix, `src/network/improv_setup.*`): WiFi setup from the browser installer, and "Update" on a board already running this firmware. The WiFiManager portal now runs non-blocking so Improv is serviced while it is open. `include/debug.h` gives modules outside `main.cpp` the same leveled macros.
 - Boot log line `Running from app0|app1` (OTA partition in use).
+- `.github/workflows/firmware.yml` calling the shared cyd-web-installer release workflow: every push builds a preview; a `v*` tag on `main` publishes the release and the installer page.
 
 ### Changed
 
 - Web UI (`index.html`, `app.js`, `style.css`) is now served from PROGMEM (`src/web_pages.h`) instead of LittleFS. `data/` holds only the four VLW fonts, so a web-UI change no longer needs `uploadfs`.
 - Partition table switched from `default.csv` to the standard dual-OTA `partitions_custom.csv` (1.792 MB app slots, 384 KB LittleFS at `0x390000`). NVS is at the same offset, so settings and WiFi survive, but the LittleFS partition moves: re-flash the fonts (`pio run -t uploadfs`) or the clock falls back to bitmap fonts.
-
 - Pinned `platform = espressif32@6.12.0` (arduino-esp32 2.0.17) for reproducible release builds. Unpinned, PlatformIO now resolves the pioarduino 3.x fork.
 - `FIRMWARE_VERSION` moved from `src/main.cpp` to `include/config.h`, now `2.10.0-dev`. Added `PROJECT_NAME` (`CYD_Family_Clock`, frozen), `PROJECT_REPO_URL` and `AP_NAME` (`WorldClock-Setup`) for the web installer.
 
