@@ -5,6 +5,18 @@
 #define CONFIG_H
 
 // =========================
+// Firmware identity
+// =========================
+// #define (not constexpr) because main.cpp pastes it into string literals
+// ("v" FIRMWARE_VERSION). The web installer tooling reads both forms.
+#define FIRMWARE_VERSION "2.10.0-dev"
+// Frozen: Improv firmware name and installer manifest name. Renaming it turns
+// the installer's "Update" (keeps settings) into a fresh "Install".
+constexpr const char *PROJECT_NAME = "CYD_Family_Clock";
+#define PROJECT_REPO_URL "https://github.com/anthonyjclarke/CYD_Family_Clock"
+#define AP_NAME "WorldClock-Setup"   // WiFiManager setup hotspot
+
+// =========================
 // I2C Sensor Configuration
 // =========================
 // Uncomment ONE of the following sensor types to enable support

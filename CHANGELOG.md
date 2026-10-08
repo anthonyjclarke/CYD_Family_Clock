@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Pinned `platform = espressif32@6.12.0` (arduino-esp32 2.0.17) for reproducible release builds. Unpinned, PlatformIO now resolves the pioarduino 3.x fork.
+- `FIRMWARE_VERSION` moved from `src/main.cpp` to `include/config.h`, now `2.10.0-dev`. Added `PROJECT_NAME` (`CYD_Family_Clock`, frozen), `PROJECT_REPO_URL` and `AP_NAME` (`WorldClock-Setup`) for the web installer.
 
 ---
 

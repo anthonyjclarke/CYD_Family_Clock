@@ -201,7 +201,6 @@ const unsigned long DIAGNOSTICS_TIMEOUT = 15000; // 15 seconds
 bool showingAlternateScreen = false;   // Current screen: false=standard, true=alternate
 unsigned long lastScreenFlip = 0;       // Last time screens were flipped
 
-#define FIRMWARE_VERSION "2.9.0"
 #define OTA_HOSTNAME "WorldClock"
 #define OTA_PASSWORD "change-me"  // TODO: Change this!
 
@@ -1860,7 +1859,7 @@ static void startWifi() {
     });
   });
 
-  bool ok = wm.autoConnect("WorldClock-Setup");
+  bool ok = wm.autoConnect(AP_NAME);
   if (!ok) {
     DBG_WARN("WiFiManager autoConnect failed/timeout. Starting fallback AP...\n");
     WiFi.mode(WIFI_AP);
