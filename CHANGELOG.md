@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `tools/merge_bin.py` post-build script (from cyd-web-installer): writes `flash_parts.json` and `firmware-merged.bin` per build. Installer label and hint on the `cyd_esp32_2432s028` env.
+
 ### Changed
 
 - Web UI (`index.html`, `app.js`, `style.css`) is now served from PROGMEM (`src/web_pages.h`) instead of LittleFS. `data/` holds only the four VLW fonts, so a web-UI change no longer needs `uploadfs`.
