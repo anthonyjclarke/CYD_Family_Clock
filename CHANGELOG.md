@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Pinned `platform = espressif32@6.12.0` (arduino-esp32 2.0.17) for reproducible release builds. Unpinned, PlatformIO now resolves the pioarduino 3.x fork.
+
 ---
 
 ## [2.9.0] - 2026-04-08
