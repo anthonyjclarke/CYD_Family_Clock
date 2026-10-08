@@ -12,9 +12,11 @@
 #include <SPI.h>
 #include <XPT2046_Touchscreen.h>
 #include <Wire.h>
+#include <esp_ota_ops.h>
 #include "config.h"
 #include "timezones.h"
 #include "web_pages.h"
+#include "network/improv_setup.h"
 
 // Sensor libraries (conditional based on config.h)
 #ifdef USE_BMP280
@@ -63,8 +65,9 @@
 #define DBG_LEVEL_INFO    3
 #define DBG_LEVEL_VERBOSE 4
 
-// Runtime debug level control (can be changed via web API)
-static uint8_t debugLevel = DEBUG_LEVEL;
+// Runtime debug level control (can be changed via web API).
+// Not static: include/debug.h (used by src/network/) declares it extern.
+uint8_t debugLevel = DEBUG_LEVEL;
 
 // Forward declaration for log buffer
 void addToLogBuffer(uint8_t level, const char* msg);
@@ -1860,7 +1863,18 @@ static void startWifi() {
     });
   });
 
+#if IMPROV_SETUP_ENABLED
+  // Non-blocking portal so Improv-Serial (web installer) can be serviced too
+  wm.setConfigPortalBlocking(false);
+#endif
   bool ok = wm.autoConnect(AP_NAME);
+#if IMPROV_SETUP_ENABLED
+  while (!ok && wm.getConfigPortalActive()) {
+    if (wm.process()) { ok = true; break; }
+    improvTick();  // restarts once Improv credentials connect
+    delay(5);
+  }
+#endif
   if (!ok) {
     DBG_WARN("WiFiManager autoConnect failed/timeout. Starting fallback AP...\n");
     WiFi.mode(WIFI_AP);
@@ -2738,6 +2752,7 @@ void showSplashScreen() {
 
 void setup() {
   Serial.begin(115200);
+  improvBegin();  // before WiFi: the web installer talks Improv on this port
   delay(200);
 
   pinMode(kBacklightPin, OUTPUT);
@@ -2760,6 +2775,7 @@ void setup() {
   touchscreen.setRotation(0);  // Portrait mode to match display
 
   DBG_INFO("CYD World Clock v%s starting...\n", FIRMWARE_VERSION);
+  DBG_INFO("Running from %s\n", esp_ota_get_running_partition()->label);
 
   // Mount filesystem SILENTLY (serial output only, no screen yet)
   DBG_INFO("Mounting LittleFS...\n");
@@ -2889,6 +2905,7 @@ static unsigned long lastSensorRead = 0;
 const unsigned long SENSOR_READ_INTERVAL = 10000;  // Read sensor every 10 seconds
 
 void loop() {
+  improvTick();  // web installer must get an answer within 1.5 s of Connect
   ArduinoOTA.handle();
   server.handleClient();  // Handle WebServer requests
 

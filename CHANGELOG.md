@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `tools/merge_bin.py` post-build script (from cyd-web-installer): writes `flash_parts.json` and `firmware-merged.bin` per build. Installer label and hint on the `cyd_esp32_2432s028` env.
+- Improv-Serial, always on (vendored `lib/ImprovWiFi` with the parser fix, `src/network/improv_setup.*`): WiFi setup from the browser installer, and "Update" on a board already running this firmware. The WiFiManager portal now runs non-blocking so Improv is serviced while it is open. `include/debug.h` gives modules outside `main.cpp` the same leveled macros.
+- Boot log line `Running from app0|app1` (OTA partition in use).
 
 ### Changed
 

@@ -16,6 +16,11 @@ constexpr const char *PROJECT_NAME = "CYD_Family_Clock";
 #define PROJECT_REPO_URL "https://github.com/anthonyjclarke/CYD_Family_Clock"
 #define AP_NAME "WorldClock-Setup"   // WiFiManager setup hotspot
 
+// Improv-Serial, always on: WiFi setup from the web installer, and lets it
+// offer "Update" (keeps settings) on a board already running this firmware.
+#define IMPROV_SETUP_ENABLED 1
+#define IMPROV_DEVICE_PREFIX "FamilyClock"  // installer shows FamilyClock-XXXX
+
 // =========================
 // I2C Sensor Configuration
 // =========================
