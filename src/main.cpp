@@ -14,6 +14,7 @@
 #include <Wire.h>
 #include "config.h"
 #include "timezones.h"
+#include "web_pages.h"
 
 // Sensor libraries (conditional based on config.h)
 #ifdef USE_BMP280
@@ -2432,7 +2433,7 @@ void setupWebServer() {
   server.on("/api/mirror", HTTP_GET, handleMirror);
   server.on("/api/debug", HTTP_GET, handleDebug);
 
-  // Handle favicon.ico to prevent LittleFS errors
+  // No favicon - answer favicon.ico requests with a plain 404
   server.on("/favicon.ico", HTTP_GET, []() {
     server.send(404);
   });
@@ -2443,19 +2444,15 @@ void setupWebServer() {
   server.on("/api/reset-wifi", HTTP_POST, handleResetWiFi);
   server.on("/api/reboot", HTTP_POST, handleReboot);
 
-  // Serve static files from LittleFS (AFTER API routes to avoid conflicts)
-  server.serveStatic("/app.js", LittleFS, "/app.js");
-  server.serveStatic("/style.css", LittleFS, "/style.css");
-
-  // Serve index.html from root (WebServer doesn't support setDefaultFile chaining)
+  // Web UI from PROGMEM (src/web_pages.h) - registered AFTER API routes
   server.on("/", HTTP_GET, []() {
-    if (!LittleFS.exists("/index.html")) {
-      server.send(404, "text/plain", "index.html not found");
-      return;
-    }
-    File file = LittleFS.open("/index.html", "r");
-    server.streamFile(file, "text/html");
-    file.close();
+    server.send_P(200, "text/html", INDEX_HTML);
+  });
+  server.on("/app.js", HTTP_GET, []() {
+    server.send_P(200, "application/javascript", APP_JS);
+  });
+  server.on("/style.css", HTTP_GET, []() {
+    server.send_P(200, "text/css", STYLE_CSS);
   });
 
   server.begin();

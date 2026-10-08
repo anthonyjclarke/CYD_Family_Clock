@@ -1,4 +1,277 @@
-// CYD World Clock - Web UI JavaScript
+// CYD Family Clock - web UI served from PROGMEM.
+//
+// Three blobs, edited here directly (they were data/index.html, app.js and
+// style.css on LittleFS until 2.10.0). Keeping the UI in flash means an
+// installer Update never needs a filesystem image for it; LittleFS now holds
+// only the VLW fonts. Raw-string delimiters: never write )HTML" )JS" )CSS"
+// inside a blob.
+#pragma once
+
+#include <Arduino.h>
+
+// index.html
+static const char INDEX_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CYD World Clock - Configuration</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>CYD World Clock</h1>
+    <div class="sub">Configuration & Status</div>
+  </header>
+
+  <main>
+    <!-- Live Clock Display - Canvas Mirror -->
+    <section class="card">
+      <h2>Display Mirror</h2>
+      <div id="canvasContainer">
+        <canvas id="displayCanvas" width="240" height="320"></canvas>
+      </div>
+      <div style="display: flex; justify-content: center; align-items: center; gap: 15px; margin-top: 12px;">
+        <small style="color: #888;">Pixel-accurate mirror of TFT display (updates every 2 sec)</small>
+        <button type="button" class="btn-secondary" id="snapshotBtn" style="padding: 6px 12px; font-size: 0.85rem;">Capture Screenshot</button>
+      </div>
+    </section>
+
+    <!-- Timezone Configuration -->
+    <section class="card">
+      <h2>Timezone Configuration</h2>
+      <form id="configForm">
+        <!-- Home City -->
+        <div class="form-group">
+          <h3>Home City (Reference Timezone)</h3>
+          <label for="homeSelect">Select City:</label>
+          <select id="homeSelect" name="homeSelect" required>
+            <option value="">-- Loading timezones --</option>
+          </select>
+          <div id="homeCustom" style="display: none; margin-top: 10px;">
+            <label for="homeCustomLabel">Custom City Name:</label>
+            <input type="text" id="homeCustomLabel" placeholder="e.g., New York" style="width: 100%; margin-bottom: 5px;">
+            <label for="homeCustomTz">Timezone String (POSIX):</label>
+            <input type="text" id="homeCustomTz" placeholder="e.g., EST5EDT,M3.2.0,M11.1.0" style="width: 100%; font-family: monospace;">
+          </div>
+          <input type="hidden" id="homeLabel" name="homeLabel">
+          <input type="hidden" id="homeTz" name="homeTz">
+          <small id="homeTzDisplay" style="color: #00d9ff; font-family: monospace;"></small>
+        </div>
+
+        <!-- Remote Cities -->
+        <div class="form-group">
+          <h3>Remote Cities (5)</h3>
+
+          <div class="city-group">
+            <label>City 1:</label>
+            <select id="remote0Select" name="remote0Select" required>
+              <option value="">-- Loading timezones --</option>
+            </select>
+            <div id="remote0Custom" style="display: none; margin-top: 5px;">
+              <input type="text" id="remote0CustomLabel" placeholder="City name" style="width: 48%; margin-right: 4%;">
+              <input type="text" id="remote0CustomTz" placeholder="TZ string" style="width: 48%; font-family: monospace;">
+            </div>
+            <input type="hidden" id="remote0Label" name="remote0Label">
+            <input type="hidden" id="remote0Tz" name="remote0Tz">
+            <small id="remote0TzDisplay" style="color: #00d9ff; font-family: monospace;"></small>
+          </div>
+
+          <div class="city-group">
+            <label>City 2:</label>
+            <select id="remote1Select" name="remote1Select" required>
+              <option value="">-- Loading timezones --</option>
+            </select>
+            <div id="remote1Custom" style="display: none; margin-top: 5px;">
+              <input type="text" id="remote1CustomLabel" placeholder="City name" style="width: 48%; margin-right: 4%;">
+              <input type="text" id="remote1CustomTz" placeholder="TZ string" style="width: 48%; font-family: monospace;">
+            </div>
+            <input type="hidden" id="remote1Label" name="remote1Label">
+            <input type="hidden" id="remote1Tz" name="remote1Tz">
+            <small id="remote1TzDisplay" style="color: #00d9ff; font-family: monospace;"></small>
+          </div>
+
+          <div class="city-group">
+            <label>City 3:</label>
+            <select id="remote2Select" name="remote2Select" required>
+              <option value="">-- Loading timezones --</option>
+            </select>
+            <div id="remote2Custom" style="display: none; margin-top: 5px;">
+              <input type="text" id="remote2CustomLabel" placeholder="City name" style="width: 48%; margin-right: 4%;">
+              <input type="text" id="remote2CustomTz" placeholder="TZ string" style="width: 48%; font-family: monospace;">
+            </div>
+            <input type="hidden" id="remote2Label" name="remote2Label">
+            <input type="hidden" id="remote2Tz" name="remote2Tz">
+            <small id="remote2TzDisplay" style="color: #00d9ff; font-family: monospace;"></small>
+          </div>
+
+          <div class="city-group">
+            <label>City 4:</label>
+            <select id="remote3Select" name="remote3Select" required>
+              <option value="">-- Loading timezones --</option>
+            </select>
+            <div id="remote3Custom" style="display: none; margin-top: 5px;">
+              <input type="text" id="remote3CustomLabel" placeholder="City name" style="width: 48%; margin-right: 4%;">
+              <input type="text" id="remote3CustomTz" placeholder="TZ string" style="width: 48%; font-family: monospace;">
+            </div>
+            <input type="hidden" id="remote3Label" name="remote3Label">
+            <input type="hidden" id="remote3Tz" name="remote3Tz">
+            <small id="remote3TzDisplay" style="color: #00d9ff; font-family: monospace;"></small>
+          </div>
+
+          <div class="city-group">
+            <label>City 5:</label>
+            <select id="remote4Select" name="remote4Select" required>
+              <option value="">-- Loading timezones --</option>
+            </select>
+            <div id="remote4Custom" style="display: none; margin-top: 5px;">
+              <input type="text" id="remote4CustomLabel" placeholder="City name" style="width: 48%; margin-right: 4%;">
+              <input type="text" id="remote4CustomTz" placeholder="TZ string" style="width: 48%; font-family: monospace;">
+            </div>
+            <input type="hidden" id="remote4Label" name="remote4Label">
+            <input type="hidden" id="remote4Tz" name="remote4Tz">
+            <small id="remote4TzDisplay" style="color: #00d9ff; font-family: monospace;"></small>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn-primary">Save Configuration</button>
+          <button type="button" class="btn-secondary" id="reloadBtn">Reload from Device</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- System Actions -->
+    <section class="card">
+      <h2>System Actions</h2>
+      <div class="form-actions">
+        <button type="button" class="btn-secondary" id="rebootBtn">Reboot Device</button>
+        <button type="button" class="btn-warning" id="resetWifiBtn">Reset WiFi Credentials</button>
+      </div>
+      <small>Note: Reset WiFi will erase stored credentials and reboot the device into AP mode.</small>
+    </section>
+
+    <!-- System Status -->
+    <section class="card">
+      <h2>System Status</h2>
+      <div class="status-grid">
+        <div class="status-item">
+          <span class="label">Firmware:</span>
+          <span id="firmware">--</span>
+        </div>
+        <div class="status-item">
+          <span class="label">Hostname:</span>
+          <span id="hostname">--</span>
+        </div>
+        <div class="status-item">
+          <span class="label">WiFi SSID:</span>
+          <span id="wifi_ssid">--</span>
+        </div>
+        <div class="status-item">
+          <span class="label">IP Address:</span>
+          <span id="wifi_ip">--</span>
+        </div>
+        <div class="status-item">
+          <span class="label">Signal:</span>
+          <span id="wifi_rssi">--</span>
+        </div>
+        <div class="status-item">
+          <span class="label">Uptime:</span>
+          <span id="uptime">--</span>
+        </div>
+        <div class="status-item">
+          <span class="label">Free Heap:</span>
+          <span id="freeHeap">--</span>
+        </div>
+        <div class="status-item">
+          <span class="label">LDR Value:</span>
+          <span id="ldrValue">--</span>
+        </div>
+        <div class="status-item">
+          <span class="label">Sensor:</span>
+          <span id="sensorType">--</span>
+        </div>
+        <div class="status-item">
+          <span class="label">Temperature:</span>
+          <span id="temperature">--</span>
+          <label style="margin-left: 10px; cursor: pointer;">
+            <input type="checkbox" id="useFahrenheit" style="margin-right: 4px;">
+            Use °F
+          </label>
+        </div>
+        <div class="status-item">
+          <span class="label">Humidity:</span>
+          <span id="humidity">--</span>
+        </div>
+        <div class="status-item">
+          <span class="label">Pressure:</span>
+          <span id="pressure">--</span>
+        </div>
+        <div class="status-item">
+          <span class="label">Display Mode:</span>
+          <select id="displayMode" style="padding: 2px 5px;">
+            <option value="portrait">Portrait (240x320)</option>
+            <option value="landscape">Landscape (320x240)</option>
+          </select>
+          <label style="margin-left: 10px; cursor: pointer;">
+            <input type="checkbox" id="flipDisplay" style="margin-right: 4px;">
+            Flip 180°
+          </label>
+        </div>
+        <div class="status-item">
+          <span class="label">Screen Rotation:</span>
+          <label style="cursor: pointer; margin-right: 10px;">
+            <input type="checkbox" id="enableScreenRotation" style="margin-right: 4px;">
+            Enable (Portrait+Sensor)
+          </label>
+          <label style="font-size: 0.9rem;">
+            <span style="margin-right: 4px;">Interval:</span>
+            <input type="number" id="screenFlipInterval" min="3" max="30" style="width: 50px; padding: 2px 4px;">
+            <span style="margin-left: 4px;">sec</span>
+          </label>
+        </div>
+        <div class="status-item">
+          <span class="label">Debug Level:</span>
+          <select id="debugLevel" style="padding: 2px 5px;">
+            <option value="0">0 - Off</option>
+            <option value="1">1 - Error</option>
+            <option value="2">2 - Warn</option>
+            <option value="3">3 - Info</option>
+            <option value="4">4 - Verbose</option>
+          </select>
+        </div>
+      </div>
+      <small style="display: block; margin-top: 10px;">Touch the screen to view diagnostics. Status updates every 5 seconds.</small>
+    </section>
+  </main>
+
+  <footer style="margin-top: 30px; padding: 20px; background: #0f1419; border-radius: 10px; text-align: center;">
+    <div style="display: flex; justify-content: center; gap: 30px; margin-bottom: 15px; flex-wrap: wrap;">
+      <a href="https://github.com/anthonyjclarke/CYD_Family_Clock" target="_blank" style="color: #00d9ff; text-decoration: none; display: flex; align-items: center; gap: 8px;">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+        </svg>
+        Project Repository
+      </a>
+      <a href="https://bsky.app/profile/anthonyjclarke.bsky.social" target="_blank" style="color: #00d9ff; text-decoration: none; display: flex; align-items: center; gap: 8px;">
+        <svg width="24" height="24" viewBox="0 0 600 530" fill="currentColor">
+          <path d="m135.72 44.03c66.496 49.921 138.02 151.14 164.28 205.46 26.262-54.316 97.782-155.54 164.28-205.46 47.98-36.021 125.72-63.892 125.72 24.795 0 17.712-10.155 148.79-16.111 170.07-20.703 73.984-96.144 92.854-163.25 81.433 117.3 19.964 147.14 86.092 82.697 152.22-122.39 125.59-175.91-31.511-189.63-71.766-2.514-7.3797-3.6904-10.832-3.7077-7.8964-0.0174-2.9357-1.1937 0.51669-3.7077 7.8964-13.714 40.255-67.233 197.36-189.63 71.766-64.444-66.128-34.605-132.26 82.697-152.22-67.108 11.421-142.55-7.4491-163.25-81.433-5.9562-21.282-16.111-152.36-16.111-170.07 0-88.687 77.742-60.816 125.72-24.795z"/>
+        </svg>
+        Bluesky
+      </a>
+    </div>
+    <p style="margin: 0; color: #888; font-size: 0.9rem;">
+      Software by <strong style="color: #00d9ff;">Anthony Clarke</strong> with help from <a href="https://claude.ai" target="_blank" style="color: #00d9ff; text-decoration: none;"><strong>Claude.ai</strong></a>
+    </p>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
+)HTML";
+
+// app.js
+static const char APP_JS[] PROGMEM = R"JS(// CYD World Clock - Web UI JavaScript
 
 // Global timezone list
 let timezones = [];
@@ -1130,3 +1403,271 @@ async function updateMirror() {
   const data = await fetchClock();
   renderClock(data);
 }
+)JS";
+
+// style.css
+static const char STYLE_CSS[] PROGMEM = R"CSS(/* CYD World Clock - Web UI Styles */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  background: #1a1a2e;
+  color: #eee;
+  line-height: 1.6;
+  padding: 20px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+header {
+  background: #16213e;
+  padding: 20px;
+  border-radius: 10px;
+  margin-bottom: 20px;
+  border: 1px solid #0f3460;
+}
+
+header h1 {
+  color: #00d9ff;
+  font-size: 2rem;
+  margin-bottom: 5px;
+}
+
+header .sub {
+  color: #aaa;
+  font-size: 0.9rem;
+}
+
+main {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.card {
+  background: #16213e;
+  border: 1px solid #0f3460;
+  border-radius: 10px;
+  padding: 20px;
+}
+
+.card h2 {
+  color: #00d9ff;
+  font-size: 1.4rem;
+  margin-bottom: 15px;
+  border-bottom: 2px solid #0f3460;
+  padding-bottom: 10px;
+}
+
+.card h3 {
+  color: #00adb5;
+  font-size: 1.1rem;
+  margin-top: 15px;
+  margin-bottom: 10px;
+}
+
+/* Canvas Display Mirror */
+#canvasContainer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: #000;
+  padding: 10px;
+  border-radius: 5px;
+  border: 2px solid #00d9ff;
+}
+
+#displayCanvas {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  background: #000;
+  display: block;
+}
+
+/* Status Grid */
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 15px;
+}
+
+.status-item {
+  padding: 10px;
+  background: #0f3460;
+  border-radius: 5px;
+}
+
+.status-item .label {
+  display: block;
+  color: #888;
+  font-size: 0.85rem;
+  margin-bottom: 5px;
+}
+
+.status-item span:not(.label) {
+  color: #00d9ff;
+  font-weight: bold;
+}
+
+/* Form Styles */
+.form-group {
+  margin-bottom: 20px;
+}
+
+label {
+  display: block;
+  color: #aaa;
+  margin-bottom: 5px;
+  margin-top: 10px;
+  font-size: 0.9rem;
+}
+
+input[type="text"],
+input[type="number"],
+select {
+  width: 100%;
+  padding: 10px;
+  background: #0f3460;
+  border: 1px solid #00adb5;
+  border-radius: 5px;
+  color: #eee;
+  font-size: 1rem;
+}
+
+input[type="text"]:focus,
+input[type="number"]:focus,
+select:focus {
+  outline: none;
+  border-color: #00d9ff;
+  box-shadow: 0 0 5px rgba(0, 217, 255, 0.3);
+}
+
+small {
+  display: block;
+  color: #888;
+  font-size: 0.8rem;
+  margin-top: 3px;
+}
+
+.city-group {
+  background: #0f3460;
+  padding: 15px;
+  border-radius: 5px;
+  margin-bottom: 10px;
+  border-left: 3px solid #00adb5;
+}
+
+/* Buttons */
+.form-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+button {
+  padding: 12px 24px;
+  border: none;
+  border-radius: 5px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.btn-primary {
+  background: #00adb5;
+  color: white;
+}
+
+.btn-primary:hover {
+  background: #00d9ff;
+}
+
+.btn-secondary {
+  background: #535c68;
+  color: white;
+}
+
+.btn-secondary:hover {
+  background: #6c757d;
+}
+
+.btn-warning {
+  background: #d63031;
+  color: white;
+}
+
+.btn-warning:hover {
+  background: #e17055;
+}
+
+/* Timezone Reference */
+.tz-reference {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 10px;
+}
+
+.tz-item {
+  padding: 8px 12px;
+  background: #0f3460;
+  border-radius: 5px;
+  font-size: 0.9rem;
+  border-left: 3px solid #00adb5;
+}
+
+.tz-item strong {
+  color: #00d9ff;
+  margin-right: 5px;
+}
+
+/* Footer */
+footer {
+  margin-top: 30px;
+  text-align: center;
+  color: #666;
+  font-size: 0.85rem;
+}
+
+footer a:hover {
+  color: #00ffff !important;
+  transform: translateY(-2px);
+  transition: all 0.3s;
+}
+
+footer svg {
+  transition: all 0.3s;
+}
+
+footer a:hover svg {
+  transform: scale(1.1);
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+  header h1 {
+    font-size: 1.5rem;
+  }
+
+  .form-actions {
+    flex-direction: column;
+  }
+
+  button {
+    width: 100%;
+  }
+
+  .status-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Canvas at 1:1 scale on mobile (handled in JS) */
+  #canvasContainer {
+    padding: 5px;
+  }
+}
+)CSS";
