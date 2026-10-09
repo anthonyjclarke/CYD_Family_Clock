@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Improv device name now uses the MAC's last two bytes (`FamilyClock-AE8C` for `…:AE:8C`), re-synced from cyd-web-installer 1.0.3. It used the vendor prefix, so every board showed the same name in the installer dialog.
 - Improv library re-synced from cyd-web-installer 1.0.1: each Improv packet now starts on a new line, so serial noise on port open can't hide the reply and turn "Update" into "Install".
 
 ### Added
