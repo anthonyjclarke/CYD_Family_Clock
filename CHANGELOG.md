@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The web installer also writes the VLW fonts: `custom_installer_fs = yes` (cyd-web-installer 1.1) ships `data/` as a LittleFS image at `0x390000`, the manifest's fifth part. A browser install or Update gives smooth fonts with no `uploadfs` step.
 - `tools/merge_bin.py` post-build script (from cyd-web-installer): writes `flash_parts.json` and `firmware-merged.bin` per build. Installer label and hint on the `cyd_esp32_2432s028` env.
 - Improv-Serial, always on (vendored `lib/ImprovWiFi` with the parser fix, `src/network/improv_setup.*`): WiFi setup from the browser installer, and "Update" on a board already running this firmware. The WiFiManager portal now runs non-blocking so Improv is serviced while it is open. `include/debug.h` gives modules outside `main.cpp` the same leveled macros.
 - Boot log line `Running from app0|app1` (OTA partition in use).
