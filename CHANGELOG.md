@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Improv library re-synced from cyd-web-installer 1.0.1: each Improv packet now starts on a new line, so serial noise on port open can't hide the reply and turn "Update" into "Install".
+
 ### Added
 
 - `tools/merge_bin.py` post-build script (from cyd-web-installer): writes `flash_parts.json` and `firmware-merged.bin` per build. Installer label and hint on the `cyd_esp32_2432s028` env.
