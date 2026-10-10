@@ -8,6 +8,37 @@ With Family all around the Globe I wanted to not have to open Apps on phone, clo
 
 A feature-rich world clock display for the ESP32 CYD (Cheap Yellow Display) featuring a 2.8" ILI9341 TFT screen. Display multiple timezones simultaneously with a beautiful interface, web-based configuration, and OTA updates.
 
+## Install
+
+**[anthonyjclarke.github.io/CYD_Family_Clock][installer]** installs the latest
+release from the browser – no PlatformIO, no drivers to build. It needs desktop
+Chrome, Edge or Opera.
+
+1. Pick your board – CYD 2.8″ (ESP32-2432S028R).
+2. Plug it in with a USB data cable, click **Connect & install** and choose its
+   port.
+3. On a new board, say yes to erasing it. When flashing finishes, choose
+   **Configure WiFi** and pick your network. (Or skip it and join the
+   `WorldClock-Setup` hotspot later.)
+4. **Visit device** opens the clock's web page, where you pick your cities.
+
+The installer writes the smooth fonts too, so there is no separate filesystem
+step. A board already running this firmware is recognised and offered
+**Update**, which keeps its settings and WiFi.
+
+**Upgrading from 2.9.0 or earlier:** the installer offers **Install**, not
+Update, because older firmware can't identify itself to it. The partition
+layout changed in 2.10.0, so say yes to erasing and set WiFi and your cities
+again.
+
+Each [release][releases] also carries the images for flashing by hand.
+`*-merged.bin` is a clean install at `0x0` with esptool; it **erases settings
+and WiFi** and has no fonts (the clock falls back to bitmap fonts).
+`*-littlefs.bin` is the font image, flashed at `0x390000`.
+
+[installer]: https://anthonyjclarke.github.io/CYD_Family_Clock/
+[releases]: https://github.com/anthonyjclarke/CYD_Family_Clock/releases
+
 ## Screenshots
 
 ### TFT Display
@@ -201,6 +232,12 @@ See [include/config.h](include/config.h) to enable sensor support.
 
 ### Build & Upload
 
+Never publish an image you built locally. Release images come only from CI on
+a `v*` tag; a local build can compile in your own `include/secrets.h`.
+
+`platformio.ini` uploads over the network (ArduinoOTA) by default. For a USB
+upload, comment out the OTA lines as the comment there describes.
+
 1. **Clone or download this repository**
 
 2. **Build the firmware:**
@@ -215,7 +252,7 @@ See [include/config.h](include/config.h) to enable sensor support.
    pio run -t upload
    ```
 
-4. **Upload web UI files to LittleFS:**
+4. **Upload the fonts to LittleFS** (the web UI is built into the firmware):
 
    ```bash
    pio run -t uploadfs
@@ -410,7 +447,7 @@ Example output:
 ### Display Issues
 
 - **Blank screen**: Check backlight pin (GPIO 21), verify TFT_eSPI config
-- **Text cutoff**: Verify font files uploaded to LittleFS
+- **Blocky digits / text cutoff**: Smooth fonts missing – reinstall from the web installer, or `pio run -t uploadfs`
 - **Wrong colors**: Check `include/User_Setup.h` for correct driver
 
 ### WiFi Issues
@@ -435,17 +472,22 @@ Example output:
 ```txt
 CYD_Family_Clock/
 ├── src/
-│   └── main.cpp              # Main application code (~2100 lines)
+│   ├── main.cpp              # Main application code
+│   ├── web_pages.h           # Web UI (HTML, JS, CSS) in PROGMEM
+│   └── network/              # Improv-Serial (web installer WiFi setup)
 ├── include/
+│   ├── config.h              # Version, name, sensor selection, I2C pins
+│   ├── debug.h               # Debug macros for modules outside main.cpp
 │   └── User_Setup.h          # TFT_eSPI hardware configuration
-├── data/                     # LittleFS files (upload with uploadfs)
-│   ├── index.html            # Web UI interface
-│   ├── app.js                # Web UI JavaScript
-│   ├── style.css             # Web UI styling
-│   ├── NotoSans-Bold7.vlw    # Smooth fonts (optional)
+├── lib/ImprovWiFi/           # Vendored Improv library (parser fix)
+├── data/                     # LittleFS: the installer's font image
+│   ├── NotoSans-Bold7.vlw    # Smooth fonts
 │   ├── NotoSans-Bold9.vlw
 │   ├── NotoSans-Bold10.vlw
 │   └── NotoSans-Bold16.vlw
+├── partitions_custom.csv     # Standard dual-OTA layout (frozen)
+├── tools/merge_bin.py        # Post-build: installer flash parts
+├── docs/WEB_INSTALLER.md     # Installer layout and hardware tests
 ├── platformio.ini            # PlatformIO configuration
 ├── CLAUDE.md                 # Project documentation
 ├── README.md                 # This file
@@ -454,8 +496,8 @@ CYD_Family_Clock/
 
 ## Memory Usage
 
-- **Flash**: 1,028,837 bytes (78.5% of 1.3MB)
-- **RAM**: 53,480 bytes (16.3% of 320KB)
+- **Flash**: 1,172,485 bytes (63.9% of the 1.79 MB app slot)
+- **RAM**: 55,468 bytes (16.9% of 320KB)
 
 ## Dependencies
 

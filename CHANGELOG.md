@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- README **Install** section for the browser installer at https://anthonyjclarke.github.io/CYD_Family_Clock/, with the upgrade note for 2.9.0 boards (Install + erase, not Update). File structure and memory figures updated.
 - `docs/WEB_INSTALLER.md`: installer layout, the 10-10-2026 smoke test (fresh install, Improv WiFi, fonts from the FS part, Connect) and the hardware tests still owed.
 - The web installer also writes the VLW fonts: `custom_installer_fs = yes` (cyd-web-installer 1.1) ships `data/` as a LittleFS image at `0x390000`, the manifest's fifth part. A browser install or Update gives smooth fonts with no `uploadfs` step.
 - `tools/merge_bin.py` post-build script (from cyd-web-installer): writes `flash_parts.json` and `firmware-merged.bin` per build. Installer label and hint on the `cyd_esp32_2432s028` env.
