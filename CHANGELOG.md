@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.10.0] 10-10-2026
+
+**Browser installer.** Install or update from https://anthonyjclarke.github.io/CYD_Family_Clock/ with no PlatformIO. The partition layout changed: a board on 2.9.0 or earlier is offered Install, not Update; answer yes to erase, then set WiFi and cities again.
+
+### Added
+
+- Web installer (ESP Web Tools, shared cyd-web-installer 1.1): `.github/workflows/firmware.yml` builds every push; a `v*` tag on `main` publishes the release and the installer page. `tools/merge_bin.py` writes the flash parts; the `cyd_esp32_2432s028` env carries the installer label.
+- The installer also writes the VLW fonts: `custom_installer_fs = yes` ships `data/` as a LittleFS image at `0x390000`, the manifest's fifth part. No `uploadfs` step for installer users.
+- Improv-Serial, always on (vendored `lib/ImprovWiFi` with the parser fix, `src/network/improv_setup.*`, tooling 1.0.3): WiFi setup from the installer, and **Update** on a board already running this firmware. The device shows as `FamilyClock-XXXX` (last two MAC bytes). The WiFiManager portal now runs non-blocking so Improv is serviced while it is open. `include/debug.h` gives modules outside `main.cpp` the same leveled macros.
+- Boot log line `Running from app0|app1` (OTA partition in use).
+- README **Install** section; `docs/WEB_INSTALLER.md` with the installer layout, the 10-10-2026 smoke test and the hardware tests still owed.
+
+### Changed
+
+- Partition table: `default.csv` → standard dual-OTA `partitions_custom.csv` (1.792 MB app slots, 384 KB LittleFS at `0x390000`). NVS keeps its offset, but the LittleFS partition moves, so PlatformIO users must re-run `pio run -t uploadfs` or the clock falls back to bitmap fonts.
+- Web UI (`index.html`, `app.js`, `style.css`) is served from PROGMEM (`src/web_pages.h`) instead of LittleFS. `data/` holds only the four VLW fonts.
+- Pinned `platform = espressif32@6.12.0` (arduino-esp32 2.0.17) for reproducible release builds. Unpinned, PlatformIO now resolves the pioarduino 3.x fork.
+- `FIRMWARE_VERSION` moved from `src/main.cpp` to `include/config.h`. Added `PROJECT_NAME` (`CYD_Family_Clock`, frozen), `PROJECT_REPO_URL` and `AP_NAME` (`WorldClock-Setup`).
+- `CLAUDE.md` trimmed to a 71-line context primer.
+
+---
+
 ## [2.9.0] - 2026-04-08
 
 ### Changed

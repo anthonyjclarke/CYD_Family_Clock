@@ -12,8 +12,11 @@
 #include <SPI.h>
 #include <XPT2046_Touchscreen.h>
 #include <Wire.h>
+#include <esp_ota_ops.h>
 #include "config.h"
 #include "timezones.h"
+#include "web_pages.h"
+#include "network/improv_setup.h"
 
 // Sensor libraries (conditional based on config.h)
 #ifdef USE_BMP280
@@ -62,8 +65,9 @@
 #define DBG_LEVEL_INFO    3
 #define DBG_LEVEL_VERBOSE 4
 
-// Runtime debug level control (can be changed via web API)
-static uint8_t debugLevel = DEBUG_LEVEL;
+// Runtime debug level control (can be changed via web API).
+// Not static: include/debug.h (used by src/network/) declares it extern.
+uint8_t debugLevel = DEBUG_LEVEL;
 
 // Forward declaration for log buffer
 void addToLogBuffer(uint8_t level, const char* msg);
@@ -201,7 +205,6 @@ const unsigned long DIAGNOSTICS_TIMEOUT = 15000; // 15 seconds
 bool showingAlternateScreen = false;   // Current screen: false=standard, true=alternate
 unsigned long lastScreenFlip = 0;       // Last time screens were flipped
 
-#define FIRMWARE_VERSION "2.9.0"
 #define OTA_HOSTNAME "WorldClock"
 #define OTA_PASSWORD "change-me"  // TODO: Change this!
 
@@ -1860,7 +1863,18 @@ static void startWifi() {
     });
   });
 
-  bool ok = wm.autoConnect("WorldClock-Setup");
+#if IMPROV_SETUP_ENABLED
+  // Non-blocking portal so Improv-Serial (web installer) can be serviced too
+  wm.setConfigPortalBlocking(false);
+#endif
+  bool ok = wm.autoConnect(AP_NAME);
+#if IMPROV_SETUP_ENABLED
+  while (!ok && wm.getConfigPortalActive()) {
+    if (wm.process()) { ok = true; break; }
+    improvTick();  // restarts once Improv credentials connect
+    delay(5);
+  }
+#endif
   if (!ok) {
     DBG_WARN("WiFiManager autoConnect failed/timeout. Starting fallback AP...\n");
     WiFi.mode(WIFI_AP);
@@ -2433,7 +2447,7 @@ void setupWebServer() {
   server.on("/api/mirror", HTTP_GET, handleMirror);
   server.on("/api/debug", HTTP_GET, handleDebug);
 
-  // Handle favicon.ico to prevent LittleFS errors
+  // No favicon - answer favicon.ico requests with a plain 404
   server.on("/favicon.ico", HTTP_GET, []() {
     server.send(404);
   });
@@ -2444,19 +2458,15 @@ void setupWebServer() {
   server.on("/api/reset-wifi", HTTP_POST, handleResetWiFi);
   server.on("/api/reboot", HTTP_POST, handleReboot);
 
-  // Serve static files from LittleFS (AFTER API routes to avoid conflicts)
-  server.serveStatic("/app.js", LittleFS, "/app.js");
-  server.serveStatic("/style.css", LittleFS, "/style.css");
-
-  // Serve index.html from root (WebServer doesn't support setDefaultFile chaining)
+  // Web UI from PROGMEM (src/web_pages.h) - registered AFTER API routes
   server.on("/", HTTP_GET, []() {
-    if (!LittleFS.exists("/index.html")) {
-      server.send(404, "text/plain", "index.html not found");
-      return;
-    }
-    File file = LittleFS.open("/index.html", "r");
-    server.streamFile(file, "text/html");
-    file.close();
+    server.send_P(200, "text/html", INDEX_HTML);
+  });
+  server.on("/app.js", HTTP_GET, []() {
+    server.send_P(200, "application/javascript", APP_JS);
+  });
+  server.on("/style.css", HTTP_GET, []() {
+    server.send_P(200, "text/css", STYLE_CSS);
   });
 
   server.begin();
@@ -2742,6 +2752,7 @@ void showSplashScreen() {
 
 void setup() {
   Serial.begin(115200);
+  improvBegin();  // before WiFi: the web installer talks Improv on this port
   delay(200);
 
   pinMode(kBacklightPin, OUTPUT);
@@ -2764,6 +2775,7 @@ void setup() {
   touchscreen.setRotation(0);  // Portrait mode to match display
 
   DBG_INFO("CYD World Clock v%s starting...\n", FIRMWARE_VERSION);
+  DBG_INFO("Running from %s\n", esp_ota_get_running_partition()->label);
 
   // Mount filesystem SILENTLY (serial output only, no screen yet)
   DBG_INFO("Mounting LittleFS...\n");
@@ -2893,6 +2905,7 @@ static unsigned long lastSensorRead = 0;
 const unsigned long SENSOR_READ_INTERVAL = 10000;  // Read sensor every 10 seconds
 
 void loop() {
+  improvTick();  // web installer must get an answer within 1.5 s of Connect
   ArduinoOTA.handle();
   server.handleClient();  // Handle WebServer requests
 
