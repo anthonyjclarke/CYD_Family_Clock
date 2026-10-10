@@ -9,7 +9,7 @@
 // =========================
 // #define (not constexpr) because main.cpp pastes it into string literals
 // ("v" FIRMWARE_VERSION). The web installer tooling reads both forms.
-#define FIRMWARE_VERSION "2.10.0"
+#define FIRMWARE_VERSION "2.11.0-dev"
 // Frozen: Improv firmware name and installer manifest name. Renaming it turns
 // the installer's "Update" (keeps settings) into a fresh "Install".
 constexpr const char *PROJECT_NAME = "CYD_Family_Clock";
