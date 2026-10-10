@@ -1018,3 +1018,7 @@ See [CHANGELOG.md](CHANGELOG.md) for detailed version history.
 - Landscape mode with analogue clock display
 - Live clock mirror in WebUI (2-second refresh)
 - Eliminated memory leak (v2.3.0) - heap stable indefinitely
+
+## Web installer and releases
+
+Before the next release, clear *Tests owed* in docs/WEB_INSTALLER.md (RUNBOOK 5b).
