@@ -48,6 +48,18 @@ MAC `b0:cb:d8:da:ae:8c`.
 
 ---
 
+## Release check (RUNBOOK 7.4)
+
+**10-10-2026 – v2.10.0 released, pass.** Release run 38012895925 (tag on
+`96fb792`). The live page served 5 parts, all 200, `littlefs.bin` 393,216 B at
+`0x390000`. Same board, `b0:cb:d8:da:ae:8c`, running `2.10.0-dev` with two
+remote cities changed in the web UI (Addis Ababa, Ulaanbaatar): the live page
+offered **Update CYD_Family_Clock** with no erase question. After the Update
+it booted `v2.10.0` from `app0`, mounted LittleFS with all four `.vlw`,
+rejoined WiFi unprompted, kept both cities, and synced NTP.
+
+---
+
 ## Tests owed
 
 Smoke-tested only. Run these on the next real work on this project, or before
@@ -57,7 +69,8 @@ them apply.
 
 - [x] Case 1 – fresh install, erased (10-10-2026, `b0:cb:d8:da:ae:8c`; only
       one board env)
-- [ ] Case 2 – Update on a provisioned board (settings kept, fonts rewritten)
+- [x] Case 2 – Update on a provisioned board, settings kept, fonts rewritten
+      (10-10-2026, `b0:cb:d8:da:ae:8c`, live v2.10.0 over 2.10.0-dev)
 - [ ] Case 3 – Update from `app1` (ArduinoOTA to `app1` first)
 - [ ] Case 4 – wrong board image – not applicable, single env
 - [ ] Install over a v2.9.0 board (`default.csv`, no Improv) without erase:

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `docs/WEB_INSTALLER.md`: v2.10.0 release check – Update from the live page kept WiFi and settings; *Tests owed* case 2 ticked.
+
 ---
 
 ## [2.10.0] 10-10-2026
