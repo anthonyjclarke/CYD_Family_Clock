@@ -1021,4 +1021,10 @@ See [CHANGELOG.md](CHANGELOG.md) for detailed version history.
 
 ## Web installer and releases
 
-Before the next release, clear *Tests owed* in docs/WEB_INSTALLER.md (RUNBOOK 5b).
+Release images come only from `.github/workflows/firmware.yml` on a `v*` tag on `main`. Details: `docs/WEB_INSTALLER.md`.
+
+- Never put `firmware-merged.bin` in a manifest – it fills NVS with `0xFF`.
+- `PROJECT_NAME` and `partitions_custom.csv` are frozen; a partition change needs an erase.
+- LittleFS holds only the shipped fonts: Install and Update rewrite it. Settings go in NVS; the web UI stays in PROGMEM (`src/web_pages.h`).
+- Never put Improv back in `lib_deps`; `improvTick()` must run at least every ~1 s.
+- Before the next release, clear *Tests owed* in docs/WEB_INSTALLER.md (RUNBOOK 5b).
